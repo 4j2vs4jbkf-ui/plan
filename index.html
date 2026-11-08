@@ -272,6 +272,8 @@ const addDays = (s, n) => { const d = pd(s); d.setDate(d.getDate() + n); return 
 const today = () => ds(new Date());
 const diffDays = (a, b) => Math.round((pd(b) - pd(a)) / 864e5);
 const t2m = t => { const [h, m] = String(t).split(':').map(Number); return h * 60 + m; };
+// 끝이 시작보다 이르면 자정을 넘긴 것으로 본다 (예: 18:15–01:30)
+const span = (a, b) => { const x = t2m(a); let y = t2m(b); if (y <= x) y += 1440; return [x, y]; };
 const m2t = m => `${pad(Math.floor(m / 60) % 24)}:${pad(m % 60)}`;
 const r5 = n => Math.round(n / 5) * 5;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -326,8 +328,8 @@ function newPlanDraft() {
 /* ========== 시간 계산 ========== */
 function freeIntervals(p, date) {
   const wd = pd(date).getDay();
-  let iv = (p.time.windows[wd] || []).map(([a, b]) => [t2m(a), t2m(b)]).filter(([a, b]) => b > a).sort((x, y) => x[0] - y[0]);
-  const busy = busyOn(p, date).map(b => [t2m(b.start), t2m(b.end)]);
+  let iv = (p.time.windows[wd] || []).filter(([a, b]) => a && b && a !== b).map(([a, b]) => span(a, b)).sort((x, y) => x[0] - y[0]);
+  const busy = busyOn(p, date).map(b => span(b.start, b.end));
   for (const [bs, be] of busy) {
     const out = [];
     for (const [a, b] of iv) {
@@ -619,7 +621,7 @@ function layout(p, date) {
       if (b > 0) { out.push({ brk: true, start: cur, end: cur + b }); cur += b; }
     }
   }
-  for (const b of busyOn(p, date)) out.push({ busy: b, start: t2m(b.start), end: t2m(b.end) });
+  for (const b of busyOn(p, date)) out.push({ busy: b, start: span(b.start, b.end)[0], end: span(b.start, b.end)[1] });
   return out.sort((a, b) => (a.start ?? 9999) - (b.start ?? 9999));
 }
 
@@ -973,7 +975,7 @@ function openTime(p, onDone) {
     const body = $('#tBody', sh);
     body.innerHTML = `
       <h2 style="margin-top:8px">요일별 공부 가능 시간대</h2>
-      <p class="help" style="margin-top:-4px">학교·자습처럼 공부할 수 있는 시간대를 넣어요. 아래 고정 일정과 겹치는 시간은 자동으로 빠져요.</p>
+      <p class="help" style="margin-top:-4px">학교·자습처럼 공부할 수 있는 시간대를 넣어요. 아래 고정 일정과 겹치는 시간은 자동으로 빠져요. 끝이 시작보다 이르면 자정 넘어까지로 계산해요.</p>
       ${WEEK_ORDER.map(wd => `<div class="wk"><div class="wk-h"><b>${WD[wd]}요일</b><span class="cap">하루 최대 <input class="inp small-inp" type="number" inputmode="decimal" step="0.5" min="0" max="16" data-max="${wd}" value="${draft.dailyMax[wd] / 60}"> 시간</span></div>
         ${draft.windows[wd].map((w, i) => `<div class="iv"><input class="inp" type="time" data-w="${wd}" data-i="${i}" data-e="0" value="${w[0]}"><span class="sub">–</span><input class="inp" type="time" data-w="${wd}" data-i="${i}" data-e="1" value="${w[1]}"><button class="icon-btn" data-rmw="${wd}" data-i="${i}" aria-label="시간대 삭제">×</button></div>`).join('') || '<div class="sub" style="margin-bottom:6px">공부 안 하는 날</div>'}
         <button class="link" data-addw="${wd}">+ 시간대</button>${wd === 1 ? ' <button class="link mute" data-copyw="1">화–목에 복사</button>' : ''}</div>`).join('')}
@@ -1010,10 +1012,10 @@ function openTime(p, onDone) {
       else if (b.dataset.bd) { sync(sh); const x = draft.busy.find(y => y.id === b.dataset.bd), v = +b.dataset.v; x.days = x.days.includes(v) ? x.days.filter(d => d !== v) : [...x.days, v]; draw(sh); }
       else if (b.id === 'tSave') {
         sync(sh);
-        for (let wd = 0; wd < 7; wd++) for (const w of draft.windows[wd]) if (!w[0] || !w[1] || t2m(w[1]) <= t2m(w[0])) return toast(`${WD[wd]}요일 시간대의 끝이 시작보다 늦어야 해요.`);
+        for (let wd = 0; wd < 7; wd++) for (const w of draft.windows[wd]) if (!w[0] || !w[1] || w[0] === w[1]) return toast(`${WD[wd]}요일 시간대의 시작과 끝을 다르게 넣어 주세요.`);
         for (const x of draft.busy.filter(y => !y.date)) {
           if (!x.title.trim()) return toast('고정 일정 이름을 적어 주세요.');
-          if (!x.start || !x.end || t2m(x.end) <= t2m(x.start)) return toast(`‘${x.title}’ 끝 시간이 시작보다 늦어야 해요.`);
+          if (!x.start || !x.end || x.start === x.end) return toast(`‘${x.title}’ 시작과 끝을 다르게 넣어 주세요.`);
           if (!x.days.length) return toast(`‘${x.title}’ 요일을 하나 이상 골라 주세요.`);
         }
         if (!(draft.session >= 20 && draft.session <= 120)) return toast('한 번에 공부하는 시간은 20~120분으로 정해 주세요.');
@@ -1099,7 +1101,7 @@ function openOneOff(p, preset) {
         if (st.kind === 'b') {
           const ti = $('#oTitle', sh), s1 = $('#oS', sh).value, e1 = $('#oE', sh).value;
           if (!ti.value.trim()) return fieldErr(ti, '일정 이름을 적어 주세요.');
-          if (!s1 || !e1 || t2m(e1) <= t2m(s1)) return fieldErr($('#oE', sh), '끝 시간이 시작보다 늦어야 해요.');
+          if (!s1 || !e1 || s1 === e1) return fieldErr($('#oE', sh), '시작과 끝을 다르게 넣어 주세요.');
           if (b) Object.assign(b, { title: ti.value.trim(), start: s1, end: e1 });
           else p.time.busy.push({ id: uid(), title: ti.value.trim(), date: d, start: s1, end: e1 });
         } else {
