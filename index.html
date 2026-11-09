@@ -20,6 +20,7 @@
   --r:6px;--ease:cubic-bezier(.2,.7,.2,1)
 }
 *{box-sizing:border-box;margin:0;padding:0}
+[hidden]{display:none !important}
 html,body{background:var(--bg);color:var(--ink);font-family:"Pretendard Variable",Pretendard,-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Noto Sans KR",sans-serif;-webkit-font-smoothing:antialiased;letter-spacing:-.01em;-webkit-tap-highlight-color:transparent}
 body{min-height:100dvh;font-size:15px;line-height:1.5}
 button,input,select,textarea{font:inherit;color:inherit;letter-spacing:inherit}
@@ -251,6 +252,25 @@ textarea.inp{min-height:150px;resize:vertical;line-height:1.6}
 .qbtn.main{background:var(--forest);color:var(--ivory);border-color:var(--forest)}
 .qbtn.main small{color:rgba(243,239,227,.7)}
 
+/* focus timer */
+.tbar{position:fixed;left:12px;right:12px;bottom:calc(70px + env(safe-area-inset-bottom));z-index:40;background:var(--forest);color:var(--ivory);border-radius:var(--r);padding:10px 12px 10px 16px;display:flex;align-items:center;gap:12px;box-shadow:0 6px 20px rgba(20,40,30,.18);animation:fade .3s var(--ease)}
+.tbar .tinfo{flex:1;min-width:0;cursor:pointer}
+.tbar .ttl{font-size:13px;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tbar .tclk{font-size:22px;font-weight:700;letter-spacing:-.02em;font-variant-numeric:tabular-nums;line-height:1.15}
+.tbar .tclk small{font-size:13px;font-weight:500;opacity:.65}
+.tbar.over .tclk{color:#F2C9B3}
+.tbar button{border:1px solid rgba(243,239,227,.35);color:var(--ivory);padding:8px 11px;border-radius:var(--r);font-size:13px;white-space:nowrap}
+.tbar button.solid{background:var(--ivory);color:var(--forest);border-color:var(--ivory);font-weight:650}
+@media(min-width:960px){.tbar{left:244px;right:24px;bottom:24px;max-width:680px;margin:0 auto}}
+.app.has-timer{padding-bottom:calc(180px + env(safe-area-inset-bottom))}
+.go{font-size:13px;color:var(--forest);padding:7px 10px;border:1px solid var(--forest);border-radius:var(--r);flex:none;font-weight:600;transition:all .2s}
+.go:active{background:var(--tint)}
+.close-row{display:flex;flex-direction:column;gap:8px;padding:14px 0;border-bottom:1px solid var(--line)}
+.close-row .cbtns{display:flex;gap:6px;flex-wrap:wrap}
+.close-row .cbtns button{padding:7px 11px;border:1px solid var(--line);border-radius:var(--r);background:var(--paper);font-size:13px}
+.close-row .cbtns button.on{background:var(--forest);color:var(--ivory);border-color:var(--forest)}
+.ratio{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line);font-size:14px;gap:12px}
+
 /* toast */
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translate(-50%,20px);background:var(--ink);color:var(--ivory);padding:12px 16px;border-radius:var(--r);font-size:14px;display:flex;gap:16px;align-items:center;z-index:60;opacity:0;transition:all .3s var(--ease);max-width:calc(100vw - 32px);pointer-events:none}
 .toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
@@ -279,6 +299,7 @@ textarea.inp{min-height:150px;resize:vertical;line-height:1.6}
   <button data-tab="stats">진도</button>
   <button data-tab="plan">계획</button>
 </nav>
+<div class="tbar" id="tbar" hidden></div>
 <div class="toast" id="toast"><span id="toastMsg"></span><button id="toastBtn"></button></div>
 <input type="file" id="importFile" accept="application/json,.json" hidden>
 
@@ -290,6 +311,11 @@ const COLORS = ['#1F4A37','#8A6D2F','#9A5537','#3D5869','#6B4A5E','#55704F','#7C
 const WD = ['일','월','화','수','목','금','토'];
 const WEEK_ORDER = [1,2,3,4,5,6,0];
 const DIFF = [1,0.6,0.8,1,1.25,1.5];
+const TYPES = { concept: '개념 이해', solve: '문제 풀이', memo: '암기', review: '복습', etc: '기타' };
+const TYPE_TAG = { 개념: 'concept', 문제: 'solve', 풀이: 'solve', 암기: 'memo', 복습: 'review' };
+const TYPE_SHORT = { concept: '개념', solve: '문제', memo: '암기', review: '복습' };
+const typeOf = t => t.type || (t.kind === 'rec' || t.kind === 'custom' ? 'etc' : t.kind === 'study' ? 'concept' : 'review');
+const GRADES = { perfect: '완벽히 이해', partial: '조금 이해', again: '한 번 더 복습' };
 const REVIEW = {0:.3,1:.5,2:.4,3:.3,4:.25,5:.2};
 
 const $ = (s, el = document) => el.querySelector(s);
@@ -400,6 +426,8 @@ function nextExam(p) {
 /* ========== 범위 → 과제 ========== */
 function parseRange(text, diff) {
   return String(text || '').split('\n').map(l => l.trim()).filter(Boolean).map(l => {
+    let type = 'concept';
+    l = l.replace(/\s*#(개념|문제|풀이|암기|복습)\s*/g, (_, k) => { type = TYPE_TAG[k]; return ' '; }).trim();
     let title = l, min = null;
     const m = l.match(/^(.*?)[\s\/|,·]+(\d+(?:\.\d+)?)\s*(분|m|min|시간|h)?\s*$/i);
     if (m && m[1].trim()) {
@@ -409,10 +437,10 @@ function parseRange(text, diff) {
       if (hour || m[3] || v >= 10) { title = m[1].trim(); min = r5(v); }
     }
     if (!min || min < 5) min = Math.max(10, r5(60 * DIFF[diff || 3]));
-    return { title, min };
+    return { title, min, type };
   });
 }
-const unitsText = s => s.units.map(u => `${u.title} / ${u.min}`).join('\n');
+const unitsText = s => s.units.map(u => `${u.title} / ${u.min}${u.type && u.type !== 'concept' ? ' #' + TYPE_SHORT[u.type] : ''}`).join('\n');
 const studyTotal = s => s.units.reduce((a, u) => a + u.min, 0);
 const reviewTotal = s => r5(studyTotal(s) * REVIEW[s.target || 0]);
 const finalMin = (p, s) => Math.min(p.time.session, 40);
@@ -424,7 +452,7 @@ function chunksForUnit(p, s, u) {
   for (let i = 0; i < n; i++) {
     const m = i === n - 1 ? left : Math.min(left, r5(u.min / n));
     left -= m;
-    if (m > 0) out.push({ sid: s.id, uid: u.id, title: n > 1 ? `${u.title} (${i + 1}/${n})` : u.title, min: m, kind: 'study' });
+    if (m > 0) out.push({ sid: s.id, uid: u.id, title: n > 1 ? `${u.title} (${i + 1}/${n})` : u.title, min: m, kind: 'study', type: u.type || 'concept' });
   }
   return out;
 }
@@ -437,11 +465,11 @@ function reviewChunks(p, s, from) {
     for (let i = 0; i < n; i++) {
       const m = i === n - 1 ? left : Math.min(left, r5(tot / n));
       left -= m;
-      if (m > 0) out.push({ sid: s.id, title: `전 범위 복습 (${i + 1}/${n})`, min: m, kind: 'review', earliest: early });
+      if (m > 0) out.push({ sid: s.id, title: `전 범위 복습 (${i + 1}/${n})`, min: m, kind: 'review', type: 'review', earliest: early });
     }
   }
   const fe = addDays(s.exam, -2) > from ? addDays(s.exam, -2) : from;
-  out.push({ sid: s.id, title: '시험 전 최종 점검', min: finalMin(p, s), kind: 'final', earliest: fe });
+  out.push({ sid: s.id, title: '시험 전 최종 점검', min: finalMin(p, s), kind: 'final', type: 'review', earliest: fe });
   return out;
 }
 const earliestFor = (s, kind, from) => {
@@ -480,14 +508,14 @@ function schedule(p, queues, from) {
         if (c.kind === 'final' || free < 20) { skip.add(best.id); continue; }
         m = Math.floor(free / 5) * 5; split = true;
       }
-      p.tasks.push({ id: uid(), sid: c.sid, uid: c.uid || null, title: c.title, min: m, date: d, done: false, kind: c.kind, order: nextOrder(p, d), carry: 0, log: [] });
+      p.tasks.push({ id: uid(), sid: c.sid, uid: c.uid || null, title: c.title, min: m, date: d, done: false, kind: c.kind, type: c.type || null, order: nextOrder(p, d), carry: 0, log: [] });
       made.placed++;
       free -= m; got[best.id] = (got[best.id] || 0) + m;
       if (split) c.min -= m; else q.shift();
     }
   }
   for (const s of subs) for (const c of queues[s.id]) {
-    p.tasks.push({ id: uid(), sid: c.sid, uid: c.uid || null, title: c.title, min: c.min, date: null, done: false, kind: c.kind, order: 0, carry: 0, log: [] });
+    p.tasks.push({ id: uid(), sid: c.sid, uid: c.uid || null, title: c.title, min: c.min, date: null, done: false, kind: c.kind, type: c.type || null, order: 0, carry: 0, log: [] });
     made.waiting++; made.waitingMin += c.min;
   }
   return made;
@@ -556,7 +584,7 @@ function undoMoves(p, moved) {
 }
 function redistribute(p) {
   const t0 = today();
-  const pool = p.tasks.filter(t => !t.done && t.kind !== 'rec' && t.kind !== 'custom' && (t.date === null || t.date >= t0))
+  const pool = p.tasks.filter(t => !t.done && t.kind !== 'rec' && t.kind !== 'custom' && t.kind !== 'spaced' && (t.date === null || t.date >= t0))
     .sort((a, b) => (a.date || '9999').localeCompare(b.date || '9999') || a.order - b.order);
   const ids = new Set(pool.map(t => t.id));
   p.tasks = p.tasks.filter(t => !ids.has(t.id));
@@ -564,9 +592,188 @@ function redistribute(p) {
   const kindRank = { study: 0, review: 1, final: 2 };
   for (const s of p.subjects) {
     queues[s.id] = pool.filter(t => t.sid === s.id).sort((a, b) => kindRank[a.kind] - kindRank[b.kind])
-      .map(t => ({ sid: s.id, uid: t.uid, title: t.title, min: t.min, kind: t.kind, earliest: earliestFor(s, t.kind, t0), carry: t.carry }));
+      .map(t => ({ sid: s.id, uid: t.uid, title: t.title, min: t.min, kind: t.kind, type: t.type, earliest: earliestFor(s, t.kind, t0), carry: t.carry }));
   }
   return schedule(p, queues, t0);
+}
+
+/* ========== 에빙하우스 망각 곡선 복습 ==========
+   첫 공부를 끝내면 1·3·7·15·30일 뒤 복습이 반드시 잡힌다 (시험일 전까지만).
+   이해도는 복습 시간과 추가 복습만 조절한다.
+   완벽히 이해: 복습 시간 줄임 / 조금 이해: 기본 / 한 번 더: 시간 늘림 + (복습 중이었다면) 다음 날 한 번 더 */
+const EBB = [1, 3, 7, 15, 30];
+const EBB_PCT = [.3, .2, .15, .1, .1];
+const GRADE_K = { perfect: .8, partial: 1, again: 1.3 };
+const ebbMin = (bm, step, g) => Math.max(10, r5(bm * EBB_PCT[step - 1] * (GRADE_K[g] || 1)));
+const rootOf = t => t.rootTitle || t.title.replace(/ \(\d+\/\d+\)$/, '');
+function nearRoom(p, d, base, s, min) {
+  for (const x of [d, addDays(d, 1), addDays(d, -1)]) if (x > base && (!s || x < s.exam) && loadOn(p, x) + min <= capacity(p, x)) return x;
+  return d;
+}
+function ebbSchedule(p, t) {
+  if (t.kind === 'spaced' || t.kind === 'final' || t.kind === 'rec' || typeOf(t) === 'etc') return [];
+  if (p.tasks.some(x => x.from === t.id && x.ebb)) return [];
+  const s = t.sid && subj(p, t.sid), base = t.doneAt || today(), made = [];
+  let root = rootOf(t), bm = t.min;
+  // 단원이 여러 조각으로 나뉘어 있으면 마지막 조각까지 끝냈을 때 한 번만 잡는다
+  if (t.uid && t.kind === 'study') {
+    const sib = p.tasks.filter(x => x.uid === t.uid && x.kind === 'study');
+    if (sib.some(x => !x.done)) return [];
+    if (p.tasks.some(x => x.ebb && x.uid === t.uid)) return [];
+    bm = sib.reduce((a, x) => a + x.min, 0);
+    const u = s && s.units.find(x => x.id === t.uid); if (u) root = u.title;
+  }
+  EBB.forEach((g, i) => {
+    let d = addDays(base, g);
+    if (s && d >= s.exam) return;
+    const min = ebbMin(bm, i + 1);
+    d = nearRoom(p, d, base, s, min);
+    const nt = { id: uid(), sid: t.sid, uid: t.uid || null, title: `${root} 복습 ${i + 1}회차`, rootTitle: root, min, date: d, done: false, kind: 'spaced', type: 'review', ebb: true, step: i + 1, from: t.id, chain: t.id, round: i + 1, baseMin: bm, order: nextOrder(p, d), carry: 0, log: [] };
+    p.tasks.push(nt); made.push(nt);
+  });
+  return made;
+}
+const chainId = t => t.chain || t.id;
+const chainReviews = (p, t) => p.tasks.filter(x => x.ebb && x.chain === chainId(t) && x.id !== t.id).sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+function rateTask(p, t, g) {
+  t.grade = g;
+  const extras = new Set(p.tasks.filter(x => x.from === t.id && !x.ebb && !x.done).map(x => x.id));
+  p.tasks = p.tasks.filter(x => !extras.has(x.id));
+  const bm = t.baseMin || t.min;
+  chainReviews(p, t).forEach(x => { if (!x.done) x.min = ebbMin(x.baseMin || bm, x.step, g); });
+  let extra = null;
+  if (g === 'again' && t.kind === 'spaced') {
+    const s = t.sid && subj(p, t.sid), d = addDays(t.doneAt || today(), 1);
+    if ((!s || d < s.exam) && !chainReviews(p, t).some(x => !x.done && x.date === d)) {
+      extra = { id: uid(), sid: t.sid, uid: t.uid || null, title: `${rootOf(t)} 한 번 더`, rootTitle: rootOf(t), min: Math.max(15, r5(bm * .3)), date: d, done: false, kind: 'spaced', type: 'review', from: t.id, chain: chainId(t), round: t.round || 0, baseMin: bm, order: nextOrder(p, d), carry: 0, log: [] };
+      p.tasks.push(extra);
+    }
+  }
+  save(); render();
+  const nx = chainReviews(p, t).find(x => !x.done && x.date);
+  toast(`${GRADES[g]}${extra ? ` · 내일 한 번 더` : ''}${nx ? ` · 다음 복습 ${mdw(nx.date)} ${fmtMin(nx.min)}` : ' · 시험 전 복습 일정을 다 마쳤어요'}`);
+}
+function openRate(p, t) {
+  const sched = chainReviews(p, t).filter(x => !x.done && x.date);
+  const isReview = t.kind === 'spaced';
+  openSheet(`<h3>얼마나 이해했나요?</h3>
+    <p class="sub" style="margin-top:4px">${esc(t.title)} · ${TYPES[typeOf(t)]}</p>
+    ${!sched.length && t.kind === 'study' && t.uid && p.tasks.some(x => x.uid === t.uid && x.kind === 'study' && !x.done) ? `<div class="note" style="margin-top:14px"><span>이 단원의 나머지 조각까지 끝내면 망각 곡선 복습 일정이 잡혀요.</span></div>` : ''}
+    ${sched.length ? `<div class="note" style="margin-top:14px;flex-direction:column;align-items:flex-start;gap:4px"><b style="font-size:13px">망각 곡선 복습 일정 (필수)</b><span class="num" style="font-size:13px;color:var(--ink2)">${sched.map(x => `${md(x.date)}`).join(' · ')}</span></div>` : ''}
+    <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+      <button class="qbtn" data-g="perfect"><b>완벽히 이해</b><small>복습 시간을 줄여요${sched[0] ? ` · 다음 복습 ${fmtMin(ebbMin(sched[0].baseMin, sched[0].step, 'perfect'))}` : ''}</small></button>
+      <button class="qbtn" data-g="partial"><b>조금 이해</b><small>기본 시간대로${sched[0] ? ` · 다음 복습 ${fmtMin(ebbMin(sched[0].baseMin, sched[0].step, 'partial'))}` : ''}</small></button>
+      <button class="qbtn" data-g="again"><b>한 번 더 복습해야 함</b><small>복습 시간을 늘려요${isReview ? ' · 내일 한 번 더 봐요' : ''}${sched[0] ? ` · 다음 복습 ${fmtMin(ebbMin(sched[0].baseMin, sched[0].step, 'again'))}` : ''}</small></button>
+    </div>
+    <p class="help" style="margin-top:12px">복습 날짜는 1·3·7·15·30일 뒤로 고정이에요. 시험일 뒤로 넘어가는 회차는 빠지고, 그날이 꽉 차 있으면 하루 앞뒤로 옮겨요.</p>
+    <div class="btns"><span class="sp"></span><button class="btn line" data-act="close">기록 안 하기</button></div>`, sh => {
+    sh.addEventListener('click', e => { const b = e.target.closest('[data-g]'); if (b) { closeSheet(); rateTask(p, t, b.dataset.g); } });
+  });
+}
+function completeTask(p, t) {
+  t.done = true; t.doneAt = today(); t.planMin = t.min;
+  ebbSchedule(p, t);
+  save(); render();
+  if (typeOf(t) !== 'etc' && t.kind !== 'rec') { openRate(p, t); return; }
+  const left = t.date ? tasksOn(p, t.date).filter(x => !x.done).length : 1;
+  toast(t.date === today() && !left ? '오늘 계획을 다 끝냈어요' : '완료했어요');
+}
+function uncompleteTask(p, t) {
+  const kids = new Set(p.tasks.filter(x => !x.done && (x.from === t.id || (x.ebb && x.chain === t.id))).map(x => x.id));
+  p.tasks = p.tasks.filter(x => !kids.has(x.id));
+  t.done = false; t.doneAt = null; t.grade = null;
+  save(); render();
+}
+
+/* ========== 집중 타이머 ========== */
+const elapsed = tm => tm.acc + (tm.paused ? 0 : Date.now() - tm.start);
+function timerTask() {
+  const tm = S.timer; if (!tm) return null;
+  const p = S.plans.find(x => x.id === tm.pid), t = p && p.tasks.find(x => x.id === tm.tid);
+  if (!t) { S.timer = null; save(); return null; }
+  return { p, t, tm };
+}
+function startTimer(p, t) {
+  const cur = timerTask();
+  if (cur && cur.t.id === t.id) return;
+  if (cur) {
+    if (!confirm(`‘${cur.t.title}’ 타이머가 돌고 있어요. 그만두고 이 과제를 시작할까요?`)) return;
+    stopTimer(false);
+  }
+  S.timer = { pid: p.id, tid: t.id, start: Date.now(), acc: 0, paused: false };
+  save(); closeSheet(); drawTimer(); render();
+  toast('집중 시작');
+}
+function stopTimer(finish) {
+  const cur = timerTask(); if (!cur) return;
+  const { p, t, tm } = cur, mins = Math.max(1, Math.round(elapsed(tm) / 60000));
+  t.spent = (t.spent || 0) + mins;
+  S.timer = null;
+  drawTimer();
+  if (finish) completeTask(p, t);
+  else { save(); render(); toast(`${fmtMin(mins)} 기록했어요 · 과제는 그대로 남아 있어요`); }
+}
+const fmtClock = ms => { const sec = Math.floor(ms / 1000), h = Math.floor(sec / 3600), m = Math.floor(sec / 60) % 60, s2 = sec % 60; return (h ? h + ':' + pad(m) : m) + ':' + pad(s2); };
+function drawTimer() {
+  const bar = $('#tbar'), cur = timerTask();
+  $('#app').classList.toggle('has-timer', !!cur);
+  if (!cur) { bar.hidden = true; bar.innerHTML = ''; return; }
+  const { t, tm } = cur, ms = elapsed(tm), over = ms > t.min * 60000;
+  bar.hidden = false;
+  bar.classList.toggle('over', over);
+  const html = `<div class="tinfo" data-act="t-open"><div class="ttl">${tm.paused ? '일시정지 · ' : ''}${esc(t.title)}</div><div class="tclk"><span id="tclk">${fmtClock(ms)}</span> <small>/ ${t.min}:00${over ? ' 넘김' : ''}</small></div></div>
+    <button data-act="t-pause">${tm.paused ? '계속' : '잠깐'}</button><button data-act="t-stop">그만</button><button class="solid" data-act="t-done">완료</button>`;
+  if (bar.dataset.k !== `${t.id}${tm.paused}${over}`) { bar.innerHTML = html; bar.dataset.k = `${t.id}${tm.paused}${over}`; }
+  else $('#tclk').textContent = fmtClock(ms);
+}
+setInterval(() => { if (S.timer && !document.hidden) drawTimer(); }, 1000);
+
+/* ========== 하루 마감 ========== */
+function dayEnd(p, date) { const iv = freeIntervals(p, date); return iv.length ? iv[iv.length - 1][1] : 21 * 60; }
+function needsClose(p) {
+  const t0 = today();
+  if (p.closed && p.closed[t0]) return 0;
+  const left = tasksOn(p, t0).filter(t => !t.done).length;
+  if (!left) return 0;
+  const n = new Date(); let nm = n.getHours() * 60 + n.getMinutes();
+  const end = dayEnd(p, t0); if (end > 1440 && nm < 300) nm += 1440;
+  return nm >= end - 30 ? left : 0;
+}
+function openClose() {
+  const p = P(), t0 = today(), list = tasksOn(p, t0).filter(t => !t.done);
+  const pick = {};
+  const tmr = addDays(t0, 1);
+  openSheet(`<h3>오늘 마감 정리</h3>
+    <p class="sub" style="margin-top:4px">못 끝낸 과제를 하나씩 정해요. 고르지 않은 건 내일 아침 자동으로 빈 시간에 옮겨져요.</p>
+    <div class="btns" style="margin-top:14px"><button class="btn line" id="cAll">전부 다음 빈 날로</button></div>
+    <div style="border-top:1px solid var(--line);margin-top:14px">${list.map(t => `<div class="close-row" data-id="${t.id}">
+      <div><div class="tt">${esc(t.title)}</div><div class="tm"><span class="dot" style="background:${subjColor(p, t)}"></span>${esc(subjName(p, t))} · ${fmtMin(t.min)}</div></div>
+      <div class="cbtns"><button data-c="next">다음 빈 날</button><button data-c="tmr">내일</button><button data-c="pick">날짜 고르기</button><button data-c="drop">버리기</button></div></div>`).join('') || '<div class="empty">못 끝낸 과제가 없어요.</div>'}</div>
+    <div class="btns"><span class="sp"></span><button class="btn line" data-act="close">닫기</button><button class="btn" id="cDone">정리 끝</button></div>`, sh => {
+    const mark = (id, c) => { pick[id] = c; $$(`.close-row[data-id="${id}"] [data-c]`, sh).forEach(b => b.classList.toggle('on', b.dataset.c === c)); };
+    sh.addEventListener('click', e => {
+      const b = e.target.closest('button'); if (!b) return;
+      if (b.dataset.c) {
+        const id = b.closest('.close-row').dataset.id;
+        if (b.dataset.c === 'pick') { applyClose(p, pick, true); closeSheet(true); openMove(id); return; }
+        mark(id, b.dataset.c);
+      }
+      if (b.id === 'cAll') list.forEach(t => mark(t.id, 'next'));
+      if (b.id === 'cDone') { const n = applyClose(p, pick); p.closed = p.closed || {}; p.closed[t0] = true; save(); closeSheet(); render(); toast(n ? `${n}개를 정리했어요. 오늘 수고했어요` : '오늘 정리 끝'); }
+    });
+  });
+  function applyClose(p, pick, partial) {
+    let n = 0; const moved = [];
+    for (const [id, c] of Object.entries(pick)) {
+      const t = p.tasks.find(x => x.id === id); if (!t || t.done) continue;
+      if (c === 'drop') { p.tasks = p.tasks.filter(x => x.id !== id); (p.dropped = p.dropped || []).push({ ...t, droppedAt: t0 }); n++; continue; }
+      const date = c === 'tmr' ? tmr : findSlot(p, t, tmr).date;
+      moveTask(p, t, date, 'later'); n++;
+    }
+    for (const k in pick) delete pick[k];
+    if (partial) save();
+    return n;
+  }
 }
 
 /* ========== 공통 UI ========== */
@@ -629,9 +836,10 @@ function taskRow(p, t) {
     <div class="tbody" data-act="edit" data-id="${t.id}">
       <div class="tt">${esc(t.title)}</div>
       <div class="tm">${t.at && t.date ? `<b class="num" style="color:var(--forest);font-weight:650">${t.at} 시작</b> · ` : ''}<span class="dot" style="background:${subjColor(p, t)}"></span>${esc(subjName(p, t))} · ${fmtMin(t.min)}
-        ${t.kind === 'review' ? '<span class="tag g">복습</span>' : ''}${t.kind === 'final' ? '<span class="tag g">최종 점검</span>' : ''}${t.kind === 'rec' ? '<span class="tag g">반복</span>' : ''}
+        ${t.ebb ? `<span class="tag g">망각 곡선 ${EBB[t.step - 1]}일</span>` : ''}${t.kind === 'final' ? '<span class="tag g">최종 점검</span>' : t.kind === 'rec' ? '<span class="tag g">반복</span>' : typeOf(t) !== 'etc' ? `<span class="tag g">${TYPES[typeOf(t)]}</span>` : ''}${t.grade ? `<span class="tag ${t.grade === 'perfect' ? 'g' : ''}">${GRADES[t.grade]}</span>` : ''}${t.spent ? `<span class="sub">실제 ${fmtMin(t.spent)}</span>` : ''}
         ${t.carry ? `<span class="tag">이월 ${t.carry}회</span>` : ''}${after ? '<span class="tag">시험일 이후</span>' : ''}</div>
     </div>
+    ${!t.done && t.date === today() ? `<button class="go" data-act="t-start" data-id="${t.id}">${S.timer && S.timer.tid === t.id ? '진행 중' : '시작'}</button>` : ''}
     ${t.done ? '' : `<button class="later" data-act="move" data-id="${t.id}">미루기</button>`}
   </div>`;
 }
@@ -712,9 +920,10 @@ function renderDay(app, p) {
     </section>
     ${examsToday.length ? `<div class="note"><span><b>시험</b> · ${examsToday.map(s => esc(s.name)).join(', ')}</span></div>` : ''}
     ${waiting.length ? `<div class="note warn"><span>날짜가 정해지지 않은 과제 <b>${waiting.length}개</b> · ${fmtMin(waiting.reduce((a, t) => a + t.min, 0))}</span><button class="link" data-act="waiting">날짜 정하기</button></div>` : ''}
+    ${isToday && needsClose(p) ? `<div class="note"><span>자습 끝날 시간이에요. 못 끝낸 과제 <b>${needsClose(p)}개</b></span><button class="link" data-act="close-day">마감 정리</button></div>` : ''}
     <div class="bar-row">
       <div class="seg"><button data-act="mode" data-m="list" class="${UI.mode === 'list' ? 'on' : ''}">목록</button><button data-act="mode" data-m="time" class="${UI.mode === 'time' ? 'on' : ''}">시간표</button></div>
-      <button class="link mute" data-act="day-opts">이 날 일정</button>
+      <span>${isToday && list.some(t => !t.done) ? '<button class="link mute" data-act="close-day">마감 정리</button> ' : ''}<button class="link mute" data-act="day-opts">이 날 일정</button></span>
     </div>
     <div class="load"><div class="meter ${load > cap ? 'over' : ''}"><i style="width:${cap ? Math.min(100, load / cap * 100) : (load ? 100 : 0)}%"></i></div>
       <span class="num">${fmtShort(load)} / ${fmtShort(cap)}${load > cap ? ` · <b style="color:var(--warn)">${fmtMin(load - cap)} 초과</b>` : ''}</span></div>
@@ -839,6 +1048,15 @@ function renderStats(app, p) {
       <rect x="${cx}" y="${H - 20 - dh}" width="${w}" height="${dh}" fill="#1F4A37" rx="2"/>
       <text x="${cx + w / 2}" y="${H - 5}" text-anchor="middle" font-size="10" fill="#949086">${pd(x.d).getDate()}</text>`;
   }).join('');
+  const ratios = subjRatios(p);
+  const ratioHtml = p.subjects.map(s => { const r = ratios[s.id]; return `<div class="ratio"><span><span class="dot" style="background:${s.color}"></span> ${esc(s.name)}</span><span class="${r && r.n >= 3 && (r.r > 1.15 || r.r < .85) ? '' : 'sub'}" style="text-align:right">${!r ? '기록 없음' : r.n < 3 ? `기록 ${r.n}개 · 3개부터 계산` : `예상의 <b class="num">${r.r.toFixed(1)}배</b> 걸려요`}</span></div>`; }).join('');
+  const canFit = Object.values(ratios).some(r => r.n >= 3 && (r.r > 1.15 || r.r < .85));
+  const dropped = (p.dropped || []).length;
+  const chains = {};
+  for (const t of all) if (t.grade) { const k = t.chain || t.id; if (!chains[k] || (t.round || 0) >= (chains[k].round || 0)) chains[k] = t; }
+  const latest = Object.values(chains);
+  const shaky = latest.filter(t => t.grade !== 'perfect').sort((a, b) => (a.grade === 'again' ? 0 : 1) - (b.grade === 'again' ? 0 : 1));
+  const gc = g => latest.filter(t => t.grade === g).length;
   const stuck = all.filter(t => !t.done && (t.carry || 0) >= 2).sort((a, b) => b.carry - a.carry).slice(0, 4);
   const doneDays = new Set(all.filter(t => t.done && t.doneAt).map(t => t.doneAt));
   let streak = 0; for (let d = doneDays.has(t0) ? t0 : addDays(t0, -1); doneDays.has(d); d = addDays(d, -1)) streak++;
@@ -849,9 +1067,39 @@ function renderStats(app, p) {
     <h2>과목별</h2><div style="border-top:1px solid var(--line)">${subRows || '<div class="empty">과목이 없어요.</div>'}</div>
     <h2>최근 14일</h2><svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="최근 14일 계획 대비 완료">${bars}</svg>
     <div class="legend"><span><i style="border:1px solid #C9C4B7"></i>계획</span><span><i style="background:#1F4A37"></i>완료</span></div>
+    <h2>이해도</h2>${latest.length ? `<div class="ratio"><span>완벽히 이해 <b class="num">${gc('perfect')}</b></span><span>조금 이해 <b class="num">${gc('partial')}</b></span><span style="color:var(--warn)">한 번 더 <b class="num">${gc('again')}</b></span></div>
+      ${shaky.length ? `<p class="sub" style="margin:12px 0 4px">아직 불안한 부분 · 다음 복습이 잡혀 있어요</p>${shaky.slice(0, 8).map(t => { const nx = p.tasks.find(x => x.from === t.id && !x.done); return `<div class="ratio"><span><span class="dot" style="background:${subjColor(p, t)}"></span> ${esc(t.rootTitle || t.title)}</span><span class="sub" style="text-align:right">${GRADES[t.grade]}${nx && nx.date ? ` · ${md(nx.date)}` : ''}</span></div>`; }).join('')}` : ''}`
+      : '<p class="sub">과제를 끝낼 때 이해도를 고르면 여기에 모여요.</p>'}
+    <h2>예상 시간 vs 실제 시간</h2><p class="sub" style="margin-bottom:4px">‘시작’ 타이머로 잰 과제만 계산해요.</p><div style="border-top:1px solid var(--line)">${ratioHtml}</div>
+    ${canFit ? '<div class="btns" style="margin-top:12px"><button class="btn line" data-act="fit-ratio">남은 과제 시간을 실제에 맞추기</button></div>' : ''}
+    ${dropped ? `<p class="help" style="margin-top:14px">마감 정리에서 버린 과제 ${dropped}개</p>` : ''}
     ${stuck.length ? `<h2>자꾸 밀리는 과제</h2><p class="sub" style="margin-bottom:6px">두 번 넘게 밀렸다면 양이 많은 거예요. 눌러서 둘로 나눠 보세요.</p><div class="list">${stuck.map(t => taskRow(p, t)).join('')}</div>` : ''}
   </div>`;
   bindSwipe(app);
+}
+
+function subjRatios(p) {
+  const out = {};
+  for (const t of p.tasks) {
+    if (!t.done || !t.spent || !t.sid || t.kind === 'rec') continue;
+    const o = out[t.sid] || (out[t.sid] = { spent: 0, plan: 0, n: 0 });
+    o.spent += t.spent; o.plan += t.planMin || t.min; o.n++;
+  }
+  for (const k in out) out[k].r = out[k].spent / out[k].plan;
+  return out;
+}
+function fitRatios(p) {
+  const ratios = subjRatios(p), t0 = today();
+  const fit = Object.entries(ratios).filter(([, r]) => r.n >= 3 && (r.r > 1.15 || r.r < .85));
+  if (!fit.length) return;
+  const txt = fit.map(([id, r]) => `${subj(p, id)?.name || ''} ${r.r.toFixed(1)}배`).join(', ');
+  if (!confirm(`남은 과제의 예상 시간을 실제 기록에 맞춰 바꿀까요? (${txt})\n바꾼 뒤 남은 과제를 다시 배분해요. 끝낸 과제와 직접 넣은 과제는 그대로예요.`)) return;
+  for (const [id, r] of fit) {
+    const k = Math.min(2, Math.max(.6, r.r));
+    p.tasks.forEach(t => { if (t.sid === id && !t.done && t.kind !== 'rec' && (!t.date || t.date >= t0)) t.min = Math.max(10, r5(t.min * k)); });
+  }
+  const res = redistribute(p); save(); render();
+  toast(`시간을 맞추고 ${res.placed}개를 다시 배치했어요${res.waiting ? ` · ${res.waiting}개는 날짜 미정` : ''}`);
 }
 
 function renderPlan(app, p) {
@@ -957,21 +1205,29 @@ function openEdit(id, presetDate) {
   if (!t) return;
   const canSplit = !isNew && !t.done && t.min >= 20;
   openSheet(`
-    <h3>${isNew ? '과제 추가' : '과제 수정'}</h3>
+    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h3>${isNew ? '과제 추가' : '과제 수정'}</h3>${!isNew && !t.done ? `<button class="btn" data-act="t-start" style="padding:9px 14px">${S.timer && S.timer.tid === t.id ? '진행 중' : '집중 시작'}</button>` : ''}</div>
     <div class="field"><label for="eTitle">할 일</label><input class="inp" id="eTitle" value="${esc(t.title)}" placeholder="예) 영어 본문 3과 암기" maxlength="80"></div>
     <div class="field two">
       <div><label for="eSub">과목</label><select class="inp" id="eSub"><option value="">기타</option>${p.subjects.map(s => `<option value="${s.id}" ${s.id === t.sid ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
       <div><label for="eMin">예상 시간(분)</label><input class="inp" id="eMin" type="number" inputmode="numeric" min="5" max="600" step="5" value="${t.min}"></div>
     </div>
+    <div class="field"><label>유형</label><div class="pills" id="eType">${Object.entries(TYPES).map(([k, v]) => `<button type="button" class="pill ${typeOf(t) === k ? 'on' : ''}" data-ty="${k}">${v}</button>`).join('')}</div>
+      <div class="help">기타를 뺀 유형은 끝낼 때 이해도를 고르고, 그에 맞춰 다음 복습이 잡혀요.</div></div>
     <div class="field two"><div><label for="eDate">날짜</label><input class="inp" id="eDate" type="date" value="${t.date || ''}"></div>
       <div><label for="eAt">시작 시각 <span class="sub" style="font-weight:400">· 선택</span></label><input class="inp" id="eAt" type="time" step="300" value="${t.at || ''}"></div></div>
     <div class="help">날짜를 비우면 ‘날짜 미정’, 시각을 비우면 그날 빈 시간에 순서대로 들어가요.</div>
+    ${!isNew && (t.done || t.spent) ? `<div class="field"><label for="eSpent">실제 걸린 시간(분)</label><input class="inp" id="eSpent" type="number" inputmode="numeric" min="0" max="900" value="${t.spent || ''}" placeholder="기록 없음"><div class="help">타이머로 재면 자동으로 들어가요. 직접 적어도 돼요.</div></div>` : ''}
+    ${!isNew && t.done && typeOf(t) !== 'etc' ? `<div class="btns" style="margin-top:14px"><span class="sub">이해도 · ${t.grade ? GRADES[t.grade] : '기록 없음'}</span><button class="btn line" data-act="e-rate">${t.grade ? '바꾸기' : '고르기'}</button></div>` : ''}
     ${!isNew && t.log && t.log.length ? `<div class="help" style="margin-top:14px">기록 · ${t.log.slice(-3).map(l => `${l.from ? md(l.from) : '미정'} → ${l.to ? md(l.to) : '미정'}`).join(', ')}</div>` : ''}
     ${!isNew ? `<div class="btns" style="margin-top:18px;flex-wrap:wrap">
       <button class="btn line" data-act="e-up">순서 위로</button><button class="btn line" data-act="e-down">아래로</button>
       ${canSplit ? '<button class="btn line" data-act="e-split">둘로 나누기</button>' : ''}</div>` : ''}
     <div class="btns">${!isNew ? '<button class="btn danger" data-act="e-del">삭제</button>' : ''}<span class="sp"></span><button class="btn line" data-act="close">취소</button><button class="btn" data-act="e-save">저장</button></div>
-  `, sh => { sh.dataset.task = id || ''; if (isNew) setTimeout(() => $('#eTitle', sh).focus(), 320); });
+  `, sh => {
+    sh.dataset.task = id || ''; sh.dataset.type = typeOf(t);
+    $('#eType', sh).addEventListener('click', e => { const b = e.target.closest('[data-ty]'); if (!b) return; sh.dataset.type = b.dataset.ty; $$('[data-ty]', sh).forEach(x => x.classList.toggle('on', x === b)); });
+    if (isNew) setTimeout(() => $('#eTitle', sh).focus(), 320);
+  });
 }
 function saveEdit(sh) {
   const p = P(), id = sh.dataset.task;
@@ -982,11 +1238,13 @@ function saveEdit(sh) {
   if (date.value && !isValidDate(date.value)) return fieldErr(date, '날짜 형식이 올바르지 않아요.');
   const d = date.value || null, at = d && $('#eAt', sh).value ? $('#eAt', sh).value : null;
   if (!id) {
-    p.tasks.push({ id: uid(), sid: $('#eSub', sh).value || null, title: title.value.trim(), min: r5(m) || m, date: d, at, done: false, kind: 'custom', order: d ? nextOrder(p, d) : 0, carry: 0, log: [] });
+    p.tasks.push({ id: uid(), sid: $('#eSub', sh).value || null, title: title.value.trim(), min: r5(m) || m, date: d, at, done: false, kind: 'custom', type: sh.dataset.type, order: d ? nextOrder(p, d) : 0, carry: 0, log: [] });
     toast('과제를 추가했어요');
   } else {
     const t = p.tasks.find(x => x.id === id);
-    t.title = title.value.trim(); t.sid = $('#eSub', sh).value || null; t.min = m;
+    t.title = title.value.trim(); t.sid = $('#eSub', sh).value || null; t.min = m; t.type = sh.dataset.type;
+    const sp = $('#eSpent', sh);
+    if (sp) { const v = parseInt(sp.value, 10); if (sp.value && (isNaN(v) || v < 0 || v > 900)) return fieldErr(sp, '0~900분 사이로 적어 주세요.'); t.spent = sp.value ? v : 0; if (t.done && !t.planMin) t.planMin = t.min; }
     if (t.date !== d) moveTask(p, t, d, 'edit', at); else t.at = at;
     toast('저장했어요');
   }
@@ -1014,7 +1272,7 @@ function openSubject(p, id, onDone) {
     const st = { target: s.target || 0, imp: s.imp, diff: s.diff, color: s.color };
     const sum = () => {
       const u = parseRange($('#sRange', sh).value, st.diff), tot = u.reduce((a, x) => a + x.min, 0);
-      $('#sSum', sh).textContent = u.length ? `${u.length}개 · 공부 ${fmtMin(tot)} + 복습 ${fmtMin(r5(tot * REVIEW[st.target]))} + 최종 점검` : '시간은 “/ 90”, “90분”, “1.5시간”처럼 적을 수 있어요.';
+      $('#sSum', sh).textContent = u.length ? `${u.length}개 · 공부 ${fmtMin(tot)} + 복습 ${fmtMin(r5(tot * REVIEW[st.target]))} + 최종 점검` : '시간은 “/ 90”, “90분”, “1.5시간”처럼 적어요. 줄 끝에 #암기 #문제 #복습을 붙이면 유형이 정해져요 (기본은 개념 이해).';
     };
     sh.addEventListener('click', e => {
       const pl = e.target.closest('[data-pill]');
@@ -1042,8 +1300,8 @@ function saveSubject(p, sh, id, st, onDone) {
   const used = new Set();
   const units = parsed.map(x => {
     const old = oldUnits.find(o => o.title === x.title && !used.has(o.id));
-    if (old) { used.add(old.id); return { id: old.id, title: x.title, min: x.min }; }
-    return { id: uid(), title: x.title, min: x.min, fresh: true };
+    if (old) { used.add(old.id); return { id: old.id, title: x.title, min: x.min, type: x.type }; }
+    return { id: uid(), title: x.title, min: x.min, type: x.type, fresh: true };
   });
   const removed = oldUnits.filter(o => !used.has(o.id));
   const oldExam = s ? s.exam : null;
@@ -1354,12 +1612,21 @@ document.addEventListener('click', e => {
     case 'close': closeSheet(); break;
     case 'toggle': {
       const t = p.tasks.find(x => x.id === id); if (!t) return;
-      t.done = !t.done; t.doneAt = t.done ? today() : null;
-      save(); const inSheet = !!sh; render(); if (inSheet) closeSheet();
-      if (t.done) { const left = tasksOn(p, t.date).filter(x => !x.done).length; if (t.date === today() && !left) toast('오늘 계획을 다 끝냈어요'); }
+      if (sh) closeSheet(true);
+      if (S.timer && S.timer.tid === t.id && !t.done) { stopTimer(true); break; }
+      if (t.done) uncompleteTask(p, t);
+      else completeTask(p, t);
       break;
     }
     case 'edit': openEdit(id); break;
+    case 't-start': { const t = p.tasks.find(x => x.id === (id || sh?.dataset.task)); if (t) startTimer(p, t); break; }
+    case 't-pause': { const tm = S.timer; if (!tm) break; if (tm.paused) { tm.start = Date.now(); tm.paused = false; } else { tm.acc += Date.now() - tm.start; tm.paused = true; } save(); drawTimer(); break; }
+    case 't-stop': stopTimer(false); break;
+    case 't-done': stopTimer(true); break;
+    case 't-open': { const c = timerTask(); if (c) { if (c.p.id !== S.active) { S.active = c.p.id; } UI.tab = 'today'; UI.date = c.t.date || today(); render(); } break; }
+    case 'close-day': openClose(); break;
+    case 'e-rate': { const t = p.tasks.find(x => x.id === sh.dataset.task); openRate(p, t); break; }
+    case 'fit-ratio': fitRatios(p); break;
     case 'add': openEdit(null, UI.tab === 'today' ? UI.date : today()); break;
     case 'move': openMove(id); break;
     case 'mv-date': showTimeStep(sh, el.dataset.d); break;
@@ -1481,6 +1748,7 @@ setInterval(() => { if (!document.hidden && UI.lastDay !== today()) onResume(); 
 
 runRollover();
 render();
+drawTimer();
 if ('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('sw.js').catch(() => {});
 </script>
 </body>
