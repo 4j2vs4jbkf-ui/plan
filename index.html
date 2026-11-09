@@ -496,9 +496,10 @@ function findSlot(p, t, from) {
   }
   return { date: from, over: true };
 }
-function moveTask(p, t, date, how) {
-  const prev = { date: t.date, order: t.order, carry: t.carry || 0 };
+function moveTask(p, t, date, how, at) {
+  const prev = { date: t.date, order: t.order, carry: t.carry || 0, at: t.at || null };
   t.date = date;
+  t.at = date && at ? at : null;
   t.order = date ? nextOrder(p, date) : 0;
   t.log = t.log || [];
   t.log.push({ a: how, from: prev.date, to: date, at: Date.now() });
@@ -520,7 +521,7 @@ function rollover(p) {
 function undoMoves(p, moved) {
   for (const m of moved) {
     const t = p.tasks.find(x => x.id === m.id); if (!t) continue;
-    t.date = m.date; t.order = m.order; t.carry = m.carry; t.log.pop();
+    t.date = m.date; t.order = m.order; t.carry = m.carry; t.at = m.at; t.log.pop();
   }
 }
 function redistribute(p) {
@@ -596,7 +597,7 @@ function taskRow(p, t) {
     <button class="chk" data-act="toggle" data-id="${t.id}" aria-label="완료 표시"></button>
     <div class="tbody" data-act="edit" data-id="${t.id}">
       <div class="tt">${esc(t.title)}</div>
-      <div class="tm"><span class="dot" style="background:${subjColor(p, t)}"></span>${esc(subjName(p, t))} · ${fmtMin(t.min)}
+      <div class="tm">${t.at && t.date ? `<b class="num" style="color:var(--forest);font-weight:650">${t.at} 시작</b> · ` : ''}<span class="dot" style="background:${subjColor(p, t)}"></span>${esc(subjName(p, t))} · ${fmtMin(t.min)}
         ${t.kind === 'review' ? '<span class="tag g">복습</span>' : ''}${t.kind === 'final' ? '<span class="tag g">최종 점검</span>' : ''}${t.kind === 'rec' ? '<span class="tag g">반복</span>' : ''}
         ${t.carry ? `<span class="tag">이월 ${t.carry}회</span>` : ''}${after ? '<span class="tag">시험일 이후</span>' : ''}</div>
     </div>
@@ -604,10 +605,23 @@ function taskRow(p, t) {
   </div>`;
 }
 
-function layout(p, date) {
-  const iv = freeIntervals(p, date), items = tasksOn(p, date), out = [];
+// 정해진 시각(t.at)이 있는 과제는 그 자리에 고정, 나머지는 남은 빈 시간에 순서대로
+const atMin = t => { if (!t.at) return null; let m = t2m(t.at); if (m < 300) m += 1440; return m; };
+function dayPlan(p, date, exceptId) {
+  const all = tasksOn(p, date).filter(t => t.id !== exceptId), out = [];
+  let iv = freeIntervals(p, date).map(x => [...x]);
+  const cut = (a, b) => {
+    const o = [];
+    for (const [x, y] of iv) { if (b <= x || a >= y) { o.push([x, y]); continue; } if (a > x) o.push([x, a]); if (b < y) o.push([b, y]); }
+    iv = o.filter(([x, y]) => y - x > 0);
+  };
+  for (const t of all.filter(t => t.at)) {
+    const a = atMin(t);
+    out.push({ t, start: a, end: a + t.min, fixed: true });
+    cut(a, a + t.min + (t.min >= 25 ? p.time.brk : 0));
+  }
   let k = 0, cur = iv.length ? iv[0][0] : 0;
-  for (const t of items) {
+  for (const t of all.filter(t => !t.at)) {
     let need = t.min; const segs = [];
     while (need > 0 && k < iv.length) {
       if (cur >= iv[k][1]) { k++; if (k < iv.length) cur = iv[k][0]; continue; }
@@ -621,8 +635,19 @@ function layout(p, date) {
       if (b > 0) { out.push({ brk: true, start: cur, end: cur + b }); cur += b; }
     }
   }
+  const gaps = [];
+  for (let i = k; i < iv.length; i++) { const a = i === k ? Math.max(cur, iv[i][0]) : iv[i][0]; if (iv[i][1] - a >= 10) gaps.push([a, iv[i][1]]); }
   for (const b of busyOn(p, date)) out.push({ busy: b, start: span(b.start, b.end)[0], end: span(b.start, b.end)[1] });
-  return out.sort((a, b) => (a.start ?? 9999) - (b.start ?? 9999));
+  return { items: out.sort((a, b) => (a.start ?? 99999) - (b.start ?? 99999) || (a.busy ? -1 : 0)), gaps };
+}
+const layout = (p, date) => dayPlan(p, date).items;
+// 이 과제가 그날 들어갈 수 있는 시작 시각 후보
+function startOptions(p, t, date, max = 8) {
+  const { gaps } = dayPlan(p, date, t.id), out = [];
+  for (const [a, b] of gaps) {
+    for (let x = a; x + t.min <= b && out.length < max; x = Math.ceil((x + 1) / 30) * 30) out.push(x);
+  }
+  return out;
 }
 
 function renderDay(app, p) {
@@ -638,7 +663,7 @@ function renderDay(app, p) {
   const title = isToday ? '오늘' : rel === 1 ? '내일' : rel === -1 ? '어제' : md(date) + ' ' + WD[pd(date).getDay()];
   let body;
   if (!list.length) body = `<div class="empty">이 날은 잡힌 공부가 없어요.${cap ? ` 계획 가능 시간은 ${fmtMin(cap)}이에요.` : ''}</div>`;
-  else if (UI.mode === 'list') body = `<div class="list">${list.map(t => taskRow(p, t)).join('')}</div>`;
+  else if (UI.mode === 'list') body = `<div class="list">${layout(p, date).filter(x => x.t).map(x => taskRow(p, x.t)).join('')}</div>`;
   else body = `<div class="list">${layout(p, date).map(x => {
       if (x.busy) return `<div class="tl-busy"><span class="time">${x.busy.start}–${x.busy.end}</span>${esc(x.busy.title)}</div>`;
       if (x.brk) return `<div class="tl-brk"><span class="time">${m2t(x.start)}–${m2t(x.end)}</span>휴식</div>`;
@@ -702,7 +727,7 @@ function renderWeek(app, p) {
         <div class="mini ${load > cap ? 'over' : ''}"><i style="width:${cap ? Math.min(100, load / cap * 100) : (load ? 100 : 0)}%"></i></div>
         <div class="n num">${fmtShort(load)} / ${fmtShort(cap)}</div></div>
       ${ex.length ? `<div class="mt"><span class="exam-badge">시험 · ${ex.map(s => esc(s.name)).join(', ')}</span></div>` : ''}
-      ${list.map(t => `<div class="mt ${t.done ? 'done' : ''}"><button class="chk" data-act="toggle" data-id="${t.id}" aria-label="완료"></button><span class="dot" style="background:${subjColor(p, t)}"></span><span data-act="edit" data-id="${t.id}" style="cursor:pointer;flex:1">${esc(t.title)}</span><span class="sub">${t.min}분</span></div>`).join('')}
+      ${list.map(t => `<div class="mt ${t.done ? 'done' : ''}"><button class="chk" data-act="toggle" data-id="${t.id}" aria-label="완료"></button><span class="dot" style="background:${subjColor(p, t)}"></span><span data-act="edit" data-id="${t.id}" style="cursor:pointer;flex:1">${t.at ? `<b class="num" style="color:var(--forest);font-weight:600">${t.at}</b> ` : ''}${esc(t.title)}</span><span class="sub">${t.min}분</span></div>`).join('')}
     </div>`;
   }
   app.innerHTML = `<div class="fade">
@@ -818,29 +843,56 @@ function openMove(id) {
       <div class="fr num">${freeM > 0 ? fmtShort(freeM) : '꽉 참'}</div></button>`;
   }
   const tomorrow = addDays(t.date && t.date >= t0 ? t.date : t0, t.date && t.date >= t0 ? 1 : (t.date ? 0 : 1));
-  openSheet(`
+  const firstAt = startOptions(p, t, slot.date, 1)[0];
+  openSheet(`<div id="mvStep1">
     <h3>언제로 미룰까요?</h3>
     <p class="sub" style="margin-top:4px">${esc(t.title)} · ${fmtMin(t.min)}${s ? ` · ${esc(s.name)} 시험 ${md(s.exam)}` : ''}</p>
     <div class="quick">
-      <button class="qbtn main" data-act="mv-date" data-d="${slot.date}"><b>다음 빈 시간</b><small>${mdw(slot.date)}${slot.over ? ' · 자리 없음' : ''}</small></button>
+      <button class="qbtn main" data-act="mv-go" data-d="${slot.date}" data-at="${firstAt != null ? m2t(firstAt) : ''}"><b>다음 빈 시간</b><small>${mdw(slot.date)}${firstAt != null ? ' ' + m2t(firstAt) : ''}${slot.over ? ' · 자리 없음' : ''}</small></button>
       <button class="qbtn" data-act="mv-date" data-d="${tomorrow}"><b>${tomorrow === t0 ? '오늘' : '하루 뒤'}</b><small>${mdw(tomorrow)}</small></button>
     </div>
     <div class="flabel" style="margin-top:22px">날짜 고르기 <span class="sub" style="font-weight:400">· 막대는 이 과제를 넣었을 때 그날 분량</span></div>
     <div class="strip">${chips}</div>
     <div class="field two" style="align-items:end"><div><label>직접 입력</label><input type="date" class="inp" id="mvDate" min="${t0}"></div><button class="btn line" data-act="mv-custom">이 날로</button></div>
     <div class="btns"><button class="link mute" data-act="mv-null">날짜 미정으로 빼두기</button><span class="sp"></span><button class="btn line" data-act="close">취소</button></div>
-  `, sh => { sh.dataset.task = id; });
+  </div><div id="mvStep2" hidden></div>`, sh => { sh.dataset.task = id; });
 }
-function doMove(id, date) {
+function showTimeStep(sh, date) {
+  const p = P(), t = p.tasks.find(x => x.id === sh.dataset.task); if (!t) return;
+  if (!isValidDate(date)) return toast('날짜를 확인해 주세요.');
+  const opts = startOptions(p, t, date);
+  const busy = dayPlan(p, date, t.id).items.filter(x => x.busy || x.fixed);
+  $('#mvStep1', sh).hidden = true;
+  const st2 = $('#mvStep2', sh);
+  st2.hidden = false;
+  st2.dataset.d = date;
+  st2.innerHTML = `
+    <button class="link mute" data-act="mv-back" style="padding-left:0">‹ 날짜 다시 고르기</button>
+    <h3 style="margin-top:6px">${mdw(date)}, 몇 시에 할까요?</h3>
+    <p class="sub" style="margin-top:4px">${esc(t.title)} · ${fmtMin(t.min)}</p>
+    <div class="flabel" style="margin-top:20px">빈 시간에서 고르기</div>
+    ${opts.length ? `<div class="quick" style="margin-top:0;grid-template-columns:repeat(auto-fill,minmax(130px,1fr))">${opts.map(x => `<button class="qbtn" data-act="mv-go" data-d="${date}" data-at="${m2t(x)}"><b class="num">${m2t(x)}</b><small class="num">${m2t(x + t.min)}까지</small></button>`).join('')}</div>`
+      : '<p class="sub">이 날은 이 과제가 통째로 들어갈 빈 시간이 없어요. 아래에서 시각을 직접 넣을 수 있어요.</p>'}
+    ${busy.length ? `<p class="help" style="margin-top:10px">이미 잡힌 시간 · ${busy.map(x => `${m2t(x.start)}–${m2t(x.end)} ${esc(x.busy ? x.busy.title : x.t.title)}`).join(', ')}</p>` : ''}
+    <div class="field two" style="align-items:end"><div><label for="mvAt">직접 입력</label><input type="time" class="inp" id="mvAt" step="300"></div><button class="btn line" data-act="mv-at">이 시각으로</button></div>
+    <div class="btns"><button class="link mute" data-act="mv-go" data-d="${date}" data-at="">시각은 정하지 않기</button><span class="sp"></span><button class="btn line" data-act="close">취소</button></div>`;
+  sh.scrollTop = 0;
+}
+function doMove(id, date, at) {
   const p = P(), t = p.tasks.find(x => x.id === id); if (!t) return;
   const s = t.sid && subj(p, t.sid);
   if (date && !isValidDate(date)) return toast('날짜를 확인해 주세요.');
   if (date && s && date >= s.exam && !confirm(`${s.name} 시험(${md(s.exam)}) 이후 날짜예요. 그래도 옮길까요?`)) return;
-  const prev = moveTask(p, t, date, 'later');
+  if (date && at) {
+    let a = t2m(at); if (a < 300) a += 1440;
+    const hit = dayPlan(p, date, t.id).items.find(x => (x.busy || x.fixed) && x.start < a + t.min && x.end > a);
+    if (hit && !confirm(`그 시간에 ‘${hit.busy ? hit.busy.title : hit.t.title}’이(가) 있어요. 그래도 ${at}로 잡을까요?`)) return;
+  }
+  const prev = moveTask(p, t, date, 'later', at);
   save(); closeSheet(); render();
   const over = date && loadOn(p, date) > capacity(p, date);
-  toast(date ? `${mdw(date)}로 옮겼어요${over ? ' · 그날 분량이 많아요' : ''}` : '날짜 미정으로 옮겼어요', '되돌리기', () => {
-    t.date = prev.date; t.order = prev.order; t.carry = prev.carry; t.log.pop(); save(); render();
+  toast(date ? `옮겼어요 · ${mdw(date)}${at ? ' ' + at + ' 시작' : ''}${over ? ' · 그날 분량이 많아요' : ''}` : '날짜 미정으로 옮겼어요', '되돌리기', () => {
+    t.date = prev.date; t.order = prev.order; t.carry = prev.carry; t.at = prev.at; t.log.pop(); save(); render();
   });
 }
 
@@ -856,7 +908,9 @@ function openEdit(id, presetDate) {
       <div><label for="eSub">과목</label><select class="inp" id="eSub"><option value="">기타</option>${p.subjects.map(s => `<option value="${s.id}" ${s.id === t.sid ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
       <div><label for="eMin">예상 시간(분)</label><input class="inp" id="eMin" type="number" inputmode="numeric" min="5" max="600" step="5" value="${t.min}"></div>
     </div>
-    <div class="field"><label for="eDate">날짜</label><input class="inp" id="eDate" type="date" value="${t.date || ''}"><div class="help">비워 두면 ‘날짜 미정’으로 보관돼요.</div></div>
+    <div class="field two"><div><label for="eDate">날짜</label><input class="inp" id="eDate" type="date" value="${t.date || ''}"></div>
+      <div><label for="eAt">시작 시각 <span class="sub" style="font-weight:400">· 선택</span></label><input class="inp" id="eAt" type="time" step="300" value="${t.at || ''}"></div></div>
+    <div class="help">날짜를 비우면 ‘날짜 미정’, 시각을 비우면 그날 빈 시간에 순서대로 들어가요.</div>
     ${!isNew && t.log && t.log.length ? `<div class="help" style="margin-top:14px">기록 · ${t.log.slice(-3).map(l => `${l.from ? md(l.from) : '미정'} → ${l.to ? md(l.to) : '미정'}`).join(', ')}</div>` : ''}
     ${!isNew ? `<div class="btns" style="margin-top:18px;flex-wrap:wrap">
       <button class="btn line" data-act="e-up">순서 위로</button><button class="btn line" data-act="e-down">아래로</button>
@@ -871,14 +925,14 @@ function saveEdit(sh) {
   const m = parseInt(min.value, 10);
   if (!m || m < 5 || m > 600) return fieldErr(min, '5분에서 600분 사이로 적어 주세요.');
   if (date.value && !isValidDate(date.value)) return fieldErr(date, '날짜 형식이 올바르지 않아요.');
-  const d = date.value || null;
+  const d = date.value || null, at = d && $('#eAt', sh).value ? $('#eAt', sh).value : null;
   if (!id) {
-    p.tasks.push({ id: uid(), sid: $('#eSub', sh).value || null, title: title.value.trim(), min: r5(m) || m, date: d, done: false, kind: 'custom', order: d ? nextOrder(p, d) : 0, carry: 0, log: [] });
+    p.tasks.push({ id: uid(), sid: $('#eSub', sh).value || null, title: title.value.trim(), min: r5(m) || m, date: d, at, done: false, kind: 'custom', order: d ? nextOrder(p, d) : 0, carry: 0, log: [] });
     toast('과제를 추가했어요');
   } else {
     const t = p.tasks.find(x => x.id === id);
     t.title = title.value.trim(); t.sid = $('#eSub', sh).value || null; t.min = m;
-    if (t.date !== d) moveTask(p, t, d, 'edit');
+    if (t.date !== d) moveTask(p, t, d, 'edit', at); else t.at = at;
     toast('저장했어요');
   }
   save(); closeSheet(); render();
@@ -1253,8 +1307,11 @@ document.addEventListener('click', e => {
     case 'edit': openEdit(id); break;
     case 'add': openEdit(null, UI.tab === 'today' ? UI.date : today()); break;
     case 'move': openMove(id); break;
-    case 'mv-date': doMove(sh.dataset.task, el.dataset.d); break;
-    case 'mv-custom': { const v = $('#mvDate', sh).value; if (!v) return fieldErr($('#mvDate', sh), '날짜를 골라 주세요.'); doMove(sh.dataset.task, v); break; }
+    case 'mv-date': showTimeStep(sh, el.dataset.d); break;
+    case 'mv-custom': { const v = $('#mvDate', sh).value; if (!v) return fieldErr($('#mvDate', sh), '날짜를 골라 주세요.'); showTimeStep(sh, v); break; }
+    case 'mv-go': doMove(sh.dataset.task, el.dataset.d, el.dataset.at || null); break;
+    case 'mv-at': { const v = $('#mvAt', sh).value; if (!v) return fieldErr($('#mvAt', sh), '시각을 골라 주세요.'); doMove(sh.dataset.task, $('#mvStep2', sh).dataset.d, v); break; }
+    case 'mv-back': $('#mvStep2', sh).hidden = true; $('#mvStep1', sh).hidden = false; break;
     case 'mv-null': doMove(sh.dataset.task, null); break;
     case 'e-save': saveEdit(sh); break;
     case 'e-del': {
@@ -1279,7 +1336,7 @@ document.addEventListener('click', e => {
       t.min = a1; t.title = base + ' · 1/2';
       const nt = { ...clone(t), id: uid(), min: a2, title: base + ' · 2/2', log: [], carry: 0 };
       const slot = findSlot(p, nt, t.date ? addDays(t.date, 1) : today());
-      nt.date = slot.date; nt.order = nextOrder(p, slot.date);
+      nt.date = slot.date; nt.at = null; nt.order = nextOrder(p, slot.date);
       p.tasks.push(nt);
       save(); closeSheet(); render(); toast(`나눴어요 · 뒷부분은 ${mdw(slot.date)}`);
       break;
