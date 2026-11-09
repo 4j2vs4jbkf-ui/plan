@@ -120,6 +120,35 @@ h3{font-size:19px;font-weight:700;letter-spacing:-.02em}
 .mt.done .chk::after{transform:rotate(-45deg) scale(1)}
 .exam-badge{font-size:11.5px;background:var(--forest);color:var(--ivory);padding:1px 6px;border-radius:3px;font-weight:600}
 
+/* weekly board */
+.app.wide{max-width:1180px}
+@media(min-width:960px){.app.wide{margin-left:calc(220px + max(0px,(100vw - 220px - 1180px)/2))}}
+.wl{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;align-items:start}
+.wl-col{display:flex;flex-direction:column;gap:5px;min-height:60vh;padding:0 0 10px;border-radius:var(--r)}
+.wl-col.today{background:var(--tint)}
+.wl-h{text-align:center;padding:8px 2px 10px;border-bottom:1px solid var(--line);margin-bottom:4px;cursor:pointer;position:sticky;top:0;background:var(--bg);z-index:2}
+.wl-col.today .wl-h{background:var(--tint)}
+.wl-h .w{font-size:12px;color:var(--mute)}
+.wl-h .d{font-size:19px;font-weight:700;letter-spacing:-.02em;line-height:1.2}
+.wl-col.today .wl-h .d{color:var(--forest)}
+.wl-h .n{font-size:11px;color:var(--mute)}
+.wl-h .ex{display:block;font-size:10.5px;background:var(--forest);color:var(--ivory);border-radius:2px;margin:4px 2px 0;padding:0 3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wl-c{display:flex;gap:6px;align-items:flex-start;background:var(--paper);border:1px solid var(--line);border-left:3px solid;border-radius:4px;padding:7px 6px;margin:0 3px;font-size:13px;line-height:1.35}
+.wl-c .chk{width:15px;height:15px;border-radius:3px;margin-top:1px}
+.wl-c .chk::after{width:7px;height:4px;margin-top:-2px}
+.wl-c.done{opacity:.5}
+.wl-c.done .wl-t{text-decoration:line-through}
+.wl-c.done .chk{background:var(--forest);border-color:var(--forest)}
+.wl-c.done .chk::after{transform:rotate(-45deg) scale(1)}
+.wl-t{flex:1;min-width:0;cursor:pointer;word-break:keep-all;overflow-wrap:anywhere}
+@media(max-width:600px){
+  .app.wide{padding-left:8px;padding-right:8px}
+  .app.wide .hd{padding:0 14px}
+  .wl{gap:2px}
+  .wl-h .d{font-size:16px}.wl-h .n{display:none}
+  .wl-c{margin:0 1px;padding:5px 3px 5px 4px;font-size:10.5px;flex-direction:column;gap:3px;border-left-width:2px}
+}
+
 /* calendar */
 .cal{display:grid;grid-template-columns:repeat(7,1fr);border-top:1px solid var(--line);border-left:1px solid var(--line)}
 .cal .wd{font-size:12px;color:var(--mute);padding:8px 6px;border-right:1px solid var(--line);border-bottom:1px solid var(--line);background:var(--paper)}
@@ -245,6 +274,7 @@ textarea.inp{min-height:150px;resize:vertical;line-height:1.6}
 <nav class="tabs" id="tabs" hidden>
   <button data-tab="today">오늘</button>
   <button data-tab="week">주간</button>
+  <button data-tab="grid">한 주</button>
   <button data-tab="month">달력</button>
   <button data-tab="stats">진도</button>
   <button data-tab="plan">계획</button>
@@ -584,10 +614,11 @@ function fieldErr(el, msg) {
 function render() {
   const app = $('#app');
   const p = P();
-  if (!p || UI.wiz) { $('#tabs').hidden = true; renderWizard(app); return; }
+  if (!p || UI.wiz) { $('#tabs').hidden = true; app.classList.remove('wide'); renderWizard(app); return; }
   $('#tabs').hidden = false;
+  app.classList.remove('wide');
   $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === UI.tab));
-  ({ today: renderDay, week: renderWeek, month: renderMonth, stats: renderStats, plan: renderPlan })[UI.tab](app, p);
+  ({ today: renderDay, week: renderWeek, grid: renderGrid, month: renderMonth, stats: renderStats, plan: renderPlan })[UI.tab](app, p);
 }
 
 function taskRow(p, t) {
@@ -735,6 +766,30 @@ function renderWeek(app, p) {
       <div class="arrows"><button class="icon-btn" data-act="wk-prev" aria-label="이전 주">‹</button>${UI.week && UI.week !== weekStart(t0) ? '<button class="link" data-act="wk-now">이번 주</button>' : ''}<button class="icon-btn" data-act="wk-next" aria-label="다음 주">›</button></div></div>
     <section class="hero"><div><div class="lbl">이번 주 계획</div><div class="big num">${fmtShort(wl)}</div></div><div class="right"><div class="lbl">완료</div><div class="mid num">${wl ? Math.round(wd / wl * 100) : 0}%</div></div><div class="bar"><i style="width:${wl ? wd / wl * 100 : 0}%"></i></div></section>
     <div style="margin-top:12px">${html}</div></div>`;
+}
+
+function renderGrid(app, p) {
+  app.classList.add('wide');
+  const t0 = today(), ws = UI.week || weekStart(t0);
+  const days = Array.from({ length: 7 }, (_, i) => addDays(ws, i));
+  const cols = days.map(d => {
+    const items = layout(p, d).filter(x => x.t).map(x => x.t);
+    const ex = p.subjects.filter(s => s.exam === d);
+    const left = items.filter(t => !t.done).length;
+    return `<div class="wl-col ${d === t0 ? 'today' : ''}">
+      <div class="wl-h" data-act="goto" data-d="${d}"><div class="w">${WD[pd(d).getDay()]}</div><div class="d">${pd(d).getDate()}</div>
+        <div class="n">${items.length ? (left ? `${left}개 남음` : '다 했어요') : '—'}</div>${ex.map(s => `<span class="ex">${esc(s.name)} 시험</span>`).join('')}</div>
+      ${items.map(t => `<div class="wl-c ${t.done ? 'done' : ''}" style="border-left-color:${subjColor(p, t)}">
+        <button class="chk" data-act="toggle" data-id="${t.id}" aria-label="완료"></button>
+        <span class="wl-t" data-act="edit" data-id="${t.id}">${esc(t.title)}</span></div>`).join('')}
+    </div>`;
+  }).join('');
+  app.innerHTML = `<div class="fade">
+    <div class="hd"><div><div class="eyebrow">${md(ws)} – ${md(addDays(ws, 6))}</div><h1>한 주 계획</h1></div>
+      <div class="arrows"><button class="icon-btn" data-act="wk-prev" aria-label="이전 주">‹</button>${UI.week && UI.week !== weekStart(t0) ? '<button class="link" data-act="wk-now">이번 주</button>' : ''}<button class="icon-btn" data-act="wk-next" aria-label="다음 주">›</button></div></div>
+    <div class="wl">${cols}</div>
+    <p class="help" style="margin-top:14px">왼쪽 색은 과목이에요. 할 일을 누르면 수정, 날짜를 누르면 그날 계획으로 가요.</p>
+  </div>`;
 }
 
 function renderMonth(app, p) {
