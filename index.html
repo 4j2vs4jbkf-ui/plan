@@ -271,6 +271,21 @@ textarea.inp{min-height:150px;resize:vertical;line-height:1.6}
 .close-row .cbtns button.on{background:var(--forest);color:var(--ivory);border-color:var(--forest)}
 .ratio{display:flex;justify-content:space-between;padding:12px 0;border-bottom:1px solid var(--line);font-size:14px;gap:12px}
 
+/* events */
+.evs{margin-top:12px;border:1px solid var(--line);border-radius:var(--r);background:var(--paper)}
+.evr{display:flex;align-items:center;gap:12px;padding:11px 14px;border-bottom:1px solid var(--line2);cursor:pointer;font-size:14px}
+.evr:last-child{border-bottom:0}
+.evr .bar{width:3px;align-self:stretch;border-radius:2px;flex:none}
+.evr .when{font-size:12.5px;color:var(--ink2);width:92px;flex:none;font-variant-numeric:tabular-nums}
+.evr .et{flex:1;min-width:0;font-weight:560}
+.evr .et small{display:block;font-weight:400;color:var(--mute);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.evr .ed{font-size:12px;color:var(--mute);white-space:nowrap}
+.evchip{font-size:11.5px;padding:1px 6px;border-radius:3px;background:color-mix(in srgb,var(--c) 14%,transparent);color:var(--c);font-weight:600;border-left:2px solid var(--c)}
+.ex.ev{background:color-mix(in srgb,var(--c) 16%,transparent);color:var(--c)}
+.cell .ex.ev{font-weight:600}
+.ev-date{font-size:13px;font-weight:650;color:var(--ink2);margin:20px 0 6px}
+.ev-date span{color:var(--mute);font-weight:500;margin-left:6px}
+
 /* toast */
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translate(-50%,20px);background:var(--ink);color:var(--ivory);padding:12px 16px;border-radius:var(--r);font-size:14px;display:flex;gap:16px;align-items:center;z-index:60;opacity:0;transition:all .3s var(--ease);max-width:calc(100vw - 32px);pointer-events:none}
 .toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
@@ -296,6 +311,7 @@ textarea.inp{min-height:150px;resize:vertical;line-height:1.6}
   <button data-tab="week">주간</button>
   <button data-tab="grid">한 주</button>
   <button data-tab="month">달력</button>
+  <button data-tab="events">일정</button>
   <button data-tab="stats">진도</button>
   <button data-tab="plan">계획</button>
 </nav>
@@ -344,6 +360,13 @@ const clone = o => JSON.parse(JSON.stringify(o));
 let S;
 try { S = JSON.parse(localStorage.getItem(KEY)); } catch (e) { S = null; }
 if (!S || !Array.isArray(S.plans)) S = { v: 1, active: null, plans: [] };
+if (!Array.isArray(S.events)) S.events = [];
+// 예전 버전의 '특정 날짜 일정'(공부 못 하는 시간)을 일정 탭으로 옮김
+for (const p of S.plans) {
+  const old = (p.time.busy || []).filter(b => b.date);
+  for (const b of old) S.events.push({ id: b.id, title: b.title, cat: 'etc', kind: 'time', repeat: 'once', date: b.date, start: b.start, end: b.end, block: true, memo: '' });
+  p.time.busy = (p.time.busy || []).filter(b => !b.date);
+}
 let saveTimer;
 function save() {
   clearTimeout(saveTimer);
@@ -400,12 +423,23 @@ function freeIntervals(p, date) {
   for (const x of iv) { const l = merged[merged.length - 1]; if (l && x[0] <= l[1]) l[1] = Math.max(l[1], x[1]); else merged.push([...x]); }
   return merged.filter(([a, b]) => b - a >= 10);
 }
+const CATS = { academy: ['학원', '#3D5869'], club: ['동아리', '#6B4A5E'], task: ['수행평가', '#9A5537'], meet: ['약속', '#8A6D2F'], etc: ['기타', '#7C7464'] };
+const EKIND = { time: '시간 일정', allday: '하루 종일', due: '마감' };
+function occurs(e, date) {
+  if (e.repeat === 'weekly') return (e.days || []).includes(pd(date).getDay()) && (!e.from || date >= e.from) && (!e.until || date <= e.until);
+  return e.date === date;
+}
+const eventsOn = date => S.events.filter(e => occurs(e, date)).sort((a, b) => (a.kind === 'time' ? t2m(a.start) : -1) - (b.kind === 'time' ? t2m(b.start) : -1));
+const evWhen = e => e.kind === 'time' ? `${e.start}–${e.end}` : e.kind === 'due' ? '마감' : '하루 종일';
 function busyOn(p, date) {
   const wd = pd(date).getDay();
-  return p.time.busy.filter(b => b.date ? b.date === date : (b.days || []).includes(wd));
+  const plan = p.time.busy.filter(b => b.date ? b.date === date : (b.days || []).includes(wd));
+  const ev = eventsOn(date).filter(e => e.kind === 'time' && e.block).map(e => ({ id: e.id, title: e.title, start: e.start, end: e.end, ev: true }));
+  return [...plan, ...ev];
 }
 function capacity(p, date) {
   if (p.override && p.override[date] != null) return p.override[date];
+  if (eventsOn(date).some(e => e.kind === 'allday' && e.rest)) return 0;
   const t = p.time, wd = pd(date).getDay();
   const free = freeIntervals(p, date).reduce((s, [a, b]) => s + b - a, 0);
   const eff = free * t.session / (t.session + t.brk);
@@ -825,7 +859,7 @@ function render() {
   $('#tabs').hidden = false;
   app.classList.remove('wide');
   $$('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.tab === UI.tab));
-  ({ today: renderDay, week: renderWeek, grid: renderGrid, month: renderMonth, stats: renderStats, plan: renderPlan })[UI.tab](app, p);
+  ({ today: renderDay, week: renderWeek, grid: renderGrid, month: renderMonth, events: renderEvents, stats: renderStats, plan: renderPlan })[UI.tab](app, p);
 }
 
 function taskRow(p, t) {
@@ -868,7 +902,7 @@ function dayPlan(p, date, exceptId) {
       const take = Math.min(need, iv[k][1] - cur);
       segs.push([cur, cur + take]); cur += take; need -= take;
     }
-    out.push({ t, start: segs.length ? segs[0][0] : null, end: segs.length ? segs[segs.length - 1][1] : null, over: need > 0 });
+    out.push({ t, start: segs.length ? segs[0][0] : null, end: segs.length ? segs[segs.length - 1][1] : null, segs, over: need > 0 });
     if (!need && t.min >= 25 && k < iv.length && cur < iv[k][1]) {
       const b = Math.min(p.time.brk, iv[k][1] - cur);
       if (b > 0) { out.push({ brk: true, start: cur, end: cur + b }); cur += b; }
@@ -906,7 +940,7 @@ function renderDay(app, p) {
   else body = `<div class="list">${layout(p, date).map(x => {
       if (x.busy) return `<div class="tl-busy"><span class="time">${x.busy.start}–${x.busy.end}</span>${esc(x.busy.title)}</div>`;
       if (x.brk) return `<div class="tl-brk"><span class="time">${m2t(x.start)}–${m2t(x.end)}</span>휴식</div>`;
-      return taskRow(p, x.t).replace('<button class="chk"', `<span class="time">${x.over ? '<span style="color:var(--warn)">시간 밖</span>' : m2t(x.start) + '–' + m2t(x.end)}</span><button class="chk"`);
+      return taskRow(p, x.t).replace('<button class="chk"', `<span class="time">${x.over ? '<span style="color:var(--warn)">시간 밖</span>' : (x.segs && x.segs.length > 1 ? x.segs.map(([a, z]) => m2t(a) + '–' + m2t(z)).join('<br>') : m2t(x.start) + '–' + m2t(x.end))}</span><button class="chk"`);
     }).join('')}</div>`;
   app.innerHTML = `<div class="fade">
     <div class="hd">
@@ -919,11 +953,12 @@ function renderDay(app, p) {
       <div class="bar"><i style="width:${pct}%"></i></div>
     </section>
     ${examsToday.length ? `<div class="note"><span><b>시험</b> · ${examsToday.map(s => esc(s.name)).join(', ')}</span></div>` : ''}
+    ${eventsOn(date).length ? `<div class="evs">${eventsOn(date).map(e => evRow(e, false)).join('')}</div>` : ''}
     ${waiting.length ? `<div class="note warn"><span>날짜가 정해지지 않은 과제 <b>${waiting.length}개</b> · ${fmtMin(waiting.reduce((a, t) => a + t.min, 0))}</span><button class="link" data-act="waiting">날짜 정하기</button></div>` : ''}
     ${isToday && needsClose(p) ? `<div class="note"><span>자습 끝날 시간이에요. 못 끝낸 과제 <b>${needsClose(p)}개</b></span><button class="link" data-act="close-day">마감 정리</button></div>` : ''}
     <div class="bar-row">
       <div class="seg"><button data-act="mode" data-m="list" class="${UI.mode === 'list' ? 'on' : ''}">목록</button><button data-act="mode" data-m="time" class="${UI.mode === 'time' ? 'on' : ''}">시간표</button></div>
-      <span>${isToday && list.some(t => !t.done) ? '<button class="link mute" data-act="close-day">마감 정리</button> ' : ''}<button class="link mute" data-act="day-opts">이 날 일정</button></span>
+      <span>${isToday && list.some(t => !t.done) ? '<button class="link mute" data-act="close-day">마감 정리</button> ' : ''}<button class="link mute" data-act="ev-new">+ 일정</button> <button class="link mute" data-act="day-opts">공부 시간 조정</button></span>
     </div>
     <div class="load"><div class="meter ${load > cap ? 'over' : ''}"><i style="width:${cap ? Math.min(100, load / cap * 100) : (load ? 100 : 0)}%"></i></div>
       <span class="num">${fmtShort(load)} / ${fmtShort(cap)}${load > cap ? ` · <b style="color:var(--warn)">${fmtMin(load - cap)} 초과</b>` : ''}</span></div>
@@ -967,6 +1002,7 @@ function renderWeek(app, p) {
         <div class="mini ${load > cap ? 'over' : ''}"><i style="width:${cap ? Math.min(100, load / cap * 100) : (load ? 100 : 0)}%"></i></div>
         <div class="n num">${fmtShort(load)} / ${fmtShort(cap)}</div></div>
       ${ex.length ? `<div class="mt"><span class="exam-badge">시험 · ${ex.map(s => esc(s.name)).join(', ')}</span></div>` : ''}
+      ${eventsOn(d).map(e => `<div class="mt" data-act="ev" data-id="${e.id}" style="cursor:pointer"><span class="evchip" style="--c:${CATS[e.cat][1]}">${e.kind === 'time' ? e.start + ' ' : e.kind === 'due' ? '마감 ' : ''}${esc(e.title)}</span></div>`).join('')}
       ${list.map(t => `<div class="mt ${t.done ? 'done' : ''}"><button class="chk" data-act="toggle" data-id="${t.id}" aria-label="완료"></button><span class="dot" style="background:${subjColor(p, t)}"></span><span data-act="edit" data-id="${t.id}" style="cursor:pointer;flex:1">${t.at ? `<b class="num" style="color:var(--forest);font-weight:600">${t.at}</b> ` : ''}${esc(t.title)}</span><span class="sub">${t.min}분</span></div>`).join('')}
     </div>`;
   }
@@ -987,7 +1023,7 @@ function renderGrid(app, p) {
     const left = items.filter(t => !t.done).length;
     return `<div class="wl-col ${d === t0 ? 'today' : ''}">
       <div class="wl-h" data-act="goto" data-d="${d}"><div class="w">${WD[pd(d).getDay()]}</div><div class="d">${pd(d).getDate()}</div>
-        <div class="n">${items.length ? (left ? `${left}개 남음` : '다 했어요') : '—'}</div>${ex.map(s => `<span class="ex">${esc(s.name)} 시험</span>`).join('')}</div>
+        <div class="n">${items.length ? (left ? `${left}개 남음` : '다 했어요') : '—'}</div>${ex.map(s => `<span class="ex">${esc(s.name)} 시험</span>`).join('')}${eventsOn(d).map(e => `<span class="ex ev" style="--c:${CATS[e.cat][1]}">${esc(e.title)}</span>`).join('')}</div>
       ${items.map(t => `<div class="wl-c ${t.done ? 'done' : ''}" style="border-left-color:${subjColor(p, t)}">
         <button class="chk" data-act="toggle" data-id="${t.id}" aria-label="완료"></button>
         <span class="wl-t" data-act="edit" data-id="${t.id}">${esc(t.title)}</span></div>`).join('')}
@@ -999,6 +1035,126 @@ function renderGrid(app, p) {
     <div class="wl">${cols}</div>
     <p class="help" style="margin-top:14px">왼쪽 색은 과목이에요. 할 일을 누르면 수정, 날짜를 누르면 그날 계획으로 가요.</p>
   </div>`;
+}
+
+function evRow(e, showDate, date) {
+  const c = CATS[e.cat] || CATS.etc;
+  const dd = e.kind === 'due' && date ? diffDays(today(), date) : null;
+  return `<div class="evr" data-act="ev" data-id="${e.id}"><span class="bar" style="background:${c[1]}"></span>
+    <span class="when">${showDate && e.repeat === 'weekly' ? WEEK_ORDER.filter(d => e.days.includes(d)).map(d => WD[d]).join(' ') : ''}${showDate && e.repeat === 'weekly' ? '<br>' : ''}${evWhen(e)}</span>
+    <span class="et">${esc(e.title)}${e.memo ? `<small>${esc(e.memo)}</small>` : ''}</span>
+    <span class="ed">${c[0]}${dd != null ? (dd === 0 ? ' · 오늘' : dd > 0 ? ` · D-${dd}` : '') : ''}${e.kind === 'allday' && e.rest ? ' · 공부 쉼' : ''}</span></div>`;
+}
+function renderEvents(app, p) {
+  const t0 = today(), groups = [];
+  for (let i = 0; i < 60; i++) {
+    const d = addDays(t0, i);
+    const evs = S.events.filter(e => e.repeat !== 'weekly' && occurs(e, d));
+    if (evs.length) groups.push([d, evs]);
+  }
+  const weekly = S.events.filter(e => e.repeat === 'weekly' && (!e.until || e.until >= t0));
+  const planBusy = p.time.busy.filter(b => !b.date);
+  const past = S.events.filter(e => e.repeat !== 'weekly' && e.date < t0).length;
+  app.innerHTML = `<div class="fade">
+    <div class="hd"><div><div class="eyebrow">공부 말고 할 일</div><h1>일정</h1></div><button class="btn" data-act="ev-new" style="padding:10px 16px">+ 일정 추가</button></div>
+    <p class="sub">시간이 정해진 일정은 그 시간만큼 공부 계획에서 빠져요. 마감은 화면에만 표시돼요.</p>
+    <h2>다가오는 일정 <span class="sub" style="font-weight:400">· 60일</span></h2>
+    ${groups.length ? groups.map(([d, evs]) => `<div class="ev-date">${mdw(d)}${d === t0 ? '<span>오늘</span>' : `<span>D-${diffDays(t0, d)}</span>`}</div><div class="evs" style="margin-top:0">${evs.map(e => evRow(e, false, d)).join('')}</div>`).join('') : '<div class="empty" style="padding:20px 0">아직 없어요. 수행평가 마감, 동아리 연습, 약속 같은 걸 넣어 보세요.</div>'}
+    <h2>매주 반복</h2>
+    ${weekly.length || planBusy.length ? `<div class="evs" style="margin-top:0">${weekly.map(e => evRow(e, true)).join('')}
+      ${planBusy.map(b => `<div class="evr" data-act="ev-plan-busy"><span class="bar" style="background:#B9B5AA"></span><span class="when">${WEEK_ORDER.filter(d => b.days.includes(d)).map(d => WD[d]).join(' ')}<br>${b.start}–${b.end}</span><span class="et">${esc(b.title)}<small>공부 가능 시간 설정에 있는 고정 일정</small></span><span class="ed">계획별</span></div>`).join('')}</div>` : '<div class="empty" style="padding:20px 0">없어요.</div>'}
+    ${past ? `<p class="help" style="margin-top:18px">지난 일정 ${past}개</p>` : ''}
+  </div>`;
+}
+function fixOverflow(p, dates) {
+  let moved = 0;
+  for (const d of dates) {
+    let guard = 0;
+    while (loadOn(p, d) > capacity(p, d) && guard++ < 30) {
+      const cand = tasksOn(p, d).filter(t => !t.done && !t.at && t.kind !== 'rec').pop();
+      if (!cand) break;
+      const slot = findSlot(p, cand, addDays(d, 1));
+      if (slot.over && slot.date === addDays(d, 1) && loadOn(p, slot.date) + cand.min > capacity(p, slot.date)) { moveTask(p, cand, null, 'event'); }
+      else moveTask(p, cand, slot.date, 'event');
+      moved++;
+    }
+  }
+  return moved;
+}
+function openEvent(id, preset) {
+  const e = id ? S.events.find(x => x.id === id) : { title: '', cat: 'etc', kind: 'time', repeat: 'once', date: (preset && preset.date) || today(), days: [], start: '19:00', end: '21:00', block: true, rest: false, memo: '' };
+  if (!e) return;
+  const st = { cat: e.cat, kind: e.kind, repeat: e.repeat, days: [...(e.days || [])], block: e.block !== false, rest: !!e.rest };
+  const pills = (key, obj, cur) => Object.entries(obj).map(([k, v]) => `<button type="button" class="pill ${k === cur ? 'on' : ''}" data-${key}="${k}">${Array.isArray(v) ? v[0] : v}</button>`).join('');
+  openSheet(`<h3>${id ? '일정 수정' : '일정 추가'}</h3>
+    <div class="field"><label for="evTitle">이름</label><input class="inp" id="evTitle" value="${esc(e.title)}" placeholder="예) 한국사 수행평가 제출, 벨아르떼 연습" maxlength="40"></div>
+    <div class="field"><label>분류</label><div class="pills">${pills('cat', CATS, st.cat)}</div></div>
+    <div class="field"><label>종류</label><div class="pills">${pills('kind', EKIND, st.kind)}</div><div class="help" id="evKindHelp"></div></div>
+    <div class="field"><label>반복</label><div class="pills">${pills('rep', { once: '한 번', weekly: '매주' }, st.repeat)}</div></div>
+    <div class="field" id="evOnce"><label for="evDate">날짜</label><input class="inp" type="date" id="evDate" value="${e.date || today()}"></div>
+    <div id="evWeekly"><div class="field"><label>요일</label><div class="pills">${WEEK_ORDER.map(d => `<button type="button" class="pill ${st.days.includes(d) ? 'on' : ''}" data-wd="${d}">${WD[d]}</button>`).join('')}</div></div>
+      <div class="field two"><div><label for="evFrom">시작일</label><input class="inp" type="date" id="evFrom" value="${e.from || today()}"></div><div><label for="evUntil">종료일 <span class="sub" style="font-weight:400">· 선택</span></label><input class="inp" type="date" id="evUntil" value="${e.until || ''}"></div></div></div>
+    <div class="field two" id="evTimes"><div><label>시작</label><input class="inp" type="time" id="evS" value="${e.start || '19:00'}"></div><div><label>끝</label><input class="inp" type="time" id="evE" value="${e.end || '21:00'}"></div></div>
+    <div class="field" id="evBlockF"><label class="flabel" style="display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" id="evBlock" ${st.block ? 'checked' : ''}> 이 시간은 공부 계획에서 빼기</label></div>
+    <div class="field" id="evRestF"><label class="flabel" style="display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" id="evRest" ${st.rest ? 'checked' : ''}> 이 날은 공부 쉬기</label></div>
+    <div class="field"><label for="evMemo">메모 <span class="sub" style="font-weight:400">· 선택</span></label><input class="inp" id="evMemo" value="${esc(e.memo || '')}" placeholder="장소, 준비물 등" maxlength="80"></div>
+    ${P() ? `<div class="field" id="evFixF"><label class="flabel" style="display:flex;gap:8px;align-items:center;font-weight:500"><input type="checkbox" id="evFix" checked> 그날 넘치는 공부는 다른 날로 옮기기</label></div>` : ''}
+    <div class="btns">${id ? '<button class="btn danger" id="evDel">삭제</button>' : ''}<span class="sp"></span><button class="btn line" data-act="close">취소</button><button class="btn" id="evSave">저장</button></div>`, sh => {
+    const sync = () => {
+      $('#evOnce', sh).hidden = st.repeat !== 'once';
+      $('#evWeekly', sh).hidden = st.repeat !== 'weekly';
+      $('#evTimes', sh).hidden = st.kind !== 'time';
+      $('#evBlockF', sh).hidden = st.kind !== 'time';
+      $('#evRestF', sh).hidden = st.kind !== 'allday';
+      if ($('#evFixF', sh)) $('#evFixF', sh).hidden = st.kind === 'due';
+      $('#evKindHelp', sh).textContent = { time: '정해진 시간에 하는 일이에요. 그 시간은 공부 계획에서 빠져요.', allday: '축제, 여행처럼 하루를 쓰는 일이에요.', due: '수행평가 제출처럼 날짜만 있는 일이에요. 공부 시간은 그대로예요.' }[st.kind];
+    };
+    sync();
+    sh.addEventListener('click', ev => {
+      const b = ev.target.closest('button'); if (!b) return;
+      const one = (attr, key) => { st[key] = b.dataset[attr]; $$(`[data-${attr}]`, sh).forEach(x => x.classList.toggle('on', x === b)); sync(); };
+      if (b.dataset.cat) one('cat', 'cat');
+      else if (b.dataset.kind) one('kind', 'kind');
+      else if (b.dataset.rep) one('rep', 'repeat');
+      else if (b.dataset.wd) { const v = +b.dataset.wd; st.days = st.days.includes(v) ? st.days.filter(x => x !== v) : [...st.days, v]; b.classList.toggle('on'); }
+      else if (b.id === 'evDel') {
+        if (!confirm(`‘${e.title}’ 일정을 지울까요?`)) return;
+        S.events = S.events.filter(x => x.id !== id); save(); closeSheet(); render(); toast('일정을 지웠어요');
+      } else if (b.id === 'evSave') {
+        const ti = $('#evTitle', sh);
+        if (!ti.value.trim()) return fieldErr(ti, '이름을 적어 주세요.');
+        const data = { title: ti.value.trim(), cat: st.cat, kind: st.kind, repeat: st.repeat, memo: $('#evMemo', sh).value.trim() };
+        if (st.repeat === 'once') {
+          const d = $('#evDate', sh);
+          if (!isValidDate(d.value)) return fieldErr(d, '날짜를 골라 주세요.');
+          Object.assign(data, { date: d.value, days: [], from: null, until: null });
+        } else {
+          if (!st.days.length) return toast('요일을 하나 이상 골라 주세요.');
+          const f = $('#evFrom', sh), u = $('#evUntil', sh);
+          if (!isValidDate(f.value)) return fieldErr(f, '시작일을 골라 주세요.');
+          if (u.value && (!isValidDate(u.value) || u.value < f.value)) return fieldErr(u, '종료일은 시작일 뒤여야 해요.');
+          Object.assign(data, { date: null, days: [...st.days].sort(), from: f.value, until: u.value || null });
+        }
+        if (st.kind === 'time') {
+          const a = $('#evS', sh).value, z = $('#evE', sh).value;
+          if (!a || !z || a === z) return fieldErr($('#evE', sh), '시작과 끝을 다르게 넣어 주세요.');
+          Object.assign(data, { start: a, end: z, block: $('#evBlock', sh).checked, rest: false });
+        } else Object.assign(data, { start: null, end: null, block: false, rest: st.kind === 'allday' && $('#evRest', sh).checked });
+        let ev;
+        if (id) { ev = S.events.find(x => x.id === id); Object.assign(ev, data); } else { ev = { id: uid(), ...data }; S.events.push(ev); }
+        let moved = 0;
+        const p = P();
+        if (p && $('#evFix', sh) && $('#evFix', sh).checked && (data.block || data.rest)) {
+          const t0 = today(), end = lastExam(p), ds2 = [];
+          if (data.repeat === 'once') { if (data.date >= t0) ds2.push(data.date); }
+          else for (let d = data.from > t0 ? data.from : t0; d <= end; d = addDays(d, 1)) if (occurs(ev, d)) ds2.push(d);
+          moved = fixOverflow(p, ds2);
+        }
+        save(); closeSheet(); render();
+        toast(`일정을 저장했어요${moved ? ` · 넘친 공부 ${moved}개를 다른 날로 옮겼어요` : ''}`);
+      }
+    });
+  });
 }
 
 function renderMonth(app, p) {
@@ -1013,7 +1169,7 @@ function renderMonth(app, p) {
     const tot = list.reduce((a, t) => a + t.min, 0), dn = list.filter(t => t.done).reduce((a, t) => a + t.min, 0);
     const ex = p.subjects.filter(s => s.exam === d);
     cells += `<div class="cell ${dd.getMonth() !== m ? 'out' : ''} ${d === t0 ? 'today' : ''}" data-act="goto" data-d="${d}">
-      <span class="dn">${dd.getDate()}</span>${ex.map(s => `<span class="ex">${esc(s.name)}</span>`).join('')}
+      <span class="dn">${dd.getDate()}</span>${ex.map(s => `<span class="ex">${esc(s.name)}</span>`).join('')}${(() => { const ev = eventsOn(d); return ev.slice(0, 2).map(e => `<span class="ex ev" style="--c:${CATS[e.cat][1]}">${esc(e.title)}</span>`).join('') + (ev.length > 2 ? `<span class="cc">+${ev.length - 2}</span>` : ''); })()}
       ${tot ? `<span class="cc num">${fmtShort(tot)}</span><div class="cb"><i style="width:${dn / tot * 100}%"></i></div>` : ''}</div>`;
   }
   app.innerHTML = `<div class="fade">
@@ -1596,7 +1752,7 @@ $('#importFile').addEventListener('change', async e => {
     const data = JSON.parse(await f.text());
     if (!data || !Array.isArray(data.plans) || data.plans.some(x => !x.id || !Array.isArray(x.tasks) || !Array.isArray(x.subjects) || !x.time)) throw new Error('형식');
     if (S.plans.length && !confirm('지금 기기의 계획을 백업 파일 내용으로 바꿀까요? 지금 데이터는 사라져요.')) return;
-    S = data; if (!P()) S.active = S.plans[0]?.id || null;
+    S = data; if (!Array.isArray(S.events)) S.events = []; if (!P()) S.active = S.plans[0]?.id || null;
     UI.wiz = null; saveNow(); render(); toast('백업을 불러왔어요');
   } catch (err) { toast('이 파일은 plan 백업 파일이 아니에요.'); }
 });
@@ -1666,7 +1822,7 @@ document.addEventListener('click', e => {
     case 'day-prev': UI.date = addDays(UI.date, -1); render(); break;
     case 'day-next': UI.date = addDays(UI.date, 1); render(); break;
     case 'day-today': UI.date = today(); render(); break;
-    case 'day-opts': openOneOff(p, { date: UI.date }); break;
+    case 'day-opts': openOneOff(p, { k: 'o', id: null, date: UI.date }); break;
     case 'mode': UI.mode = el.dataset.m; render(); break;
     case 'waiting': openWaiting(); break;
     case 'goto': UI.tab = 'today'; UI.date = el.dataset.d; render(); window.scrollTo(0, 0); break;
@@ -1684,6 +1840,9 @@ document.addEventListener('click', e => {
     case 'rec-new': openRec(p, null); break;
     case 'oneoff': openOneOff(p, { k: el.dataset.k, id }); break;
     case 'oneoff-new': openOneOff(p, null); break;
+    case 'ev': openEvent(id); break;
+    case 'ev-new': openEvent(null, { date: UI.tab === 'today' ? UI.date : today() }); break;
+    case 'ev-plan-busy': openTime(p); break;
     case 'rename': openRename(p); break;
     case 'redist': {
       if (!confirm('끝낸 과제와 직접 추가한 과제는 그대로 두고, 오늘 이후 남은 과목 과제만 지금 설정에 맞춰 다시 배치할까요?')) return;
