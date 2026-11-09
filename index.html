@@ -286,6 +286,19 @@ textarea.inp{min-height:150px;resize:vertical;line-height:1.6}
 .ev-date{font-size:13px;font-weight:650;color:var(--ink2);margin:20px 0 6px}
 .ev-date span{color:var(--mute);font-weight:500;margin-left:6px}
 
+/* d-day strip */
+.dstrip{display:flex;gap:8px;overflow-x:auto;margin:10px -22px 0;padding:2px 22px 4px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.dstrip::-webkit-scrollbar{display:none}
+.dchip2{flex:0 0 auto;min-width:118px;border:1px solid var(--line);background:var(--paper);border-radius:var(--r);padding:10px 12px}
+.dchip2 .dn2{font-size:13px;font-weight:600;display:flex;align-items:center;gap:6px;white-space:nowrap}
+.dchip2 .dd2{font-size:22px;font-weight:750;letter-spacing:-.03em;margin-top:2px}
+.dchip2 .dm2{font-size:11.5px;color:var(--mute);white-space:nowrap}
+.dchip2.tight{border-color:#E5CFC3}
+.dchip2.tight .dm2{color:var(--warn)}
+.pb2{height:3px;background:var(--line);border-radius:3px;overflow:hidden;margin-top:8px}
+.pb2 i{display:block;height:100%}
+@media(min-width:960px){.dstrip{margin:10px 0 0;padding:2px 0 4px;flex-wrap:wrap}.dchip2{flex:1 1 118px}}
+
 /* toast */
 .toast{position:fixed;left:50%;bottom:calc(84px + env(safe-area-inset-bottom));transform:translate(-50%,20px);background:var(--ink);color:var(--ivory);padding:12px 16px;border-radius:var(--r);font-size:14px;display:flex;gap:16px;align-items:center;z-index:60;opacity:0;transition:all .3s var(--ease);max-width:calc(100vw - 32px);pointer-events:none}
 .toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
@@ -327,9 +340,13 @@ const COLORS = ['#1F4A37','#8A6D2F','#9A5537','#3D5869','#6B4A5E','#55704F','#7C
 const WD = ['일','월','화','수','목','금','토'];
 const WEEK_ORDER = [1,2,3,4,5,6,0];
 const DIFF = [1,0.6,0.8,1,1.25,1.5];
-const TYPES = { concept: '개념 이해', solve: '문제 풀이', memo: '암기', review: '복습', etc: '기타' };
-const TYPE_TAG = { 개념: 'concept', 문제: 'solve', 풀이: 'solve', 암기: 'memo', 복습: 'review' };
-const TYPE_SHORT = { concept: '개념', solve: '문제', memo: '암기', review: '복습' };
+const TYPES = { concept: '개념 이해', solve: '문제 풀이', passage: '지문 복습', memo: '암기', review: '복습', etc: '기타' };
+const TYPE_TAG = { 개념: 'concept', 문제: 'solve', 풀이: 'solve', 문제풀이: 'solve', 지문: 'passage', 지문복습: 'passage', 암기: 'memo', 복습: 'review' };
+const TYPE_SHORT = { concept: '개념', solve: '문제', passage: '지문', memo: '암기', review: '복습' };
+// 직접 만든 유형은 S.types에 저장 (모든 계획 공통)
+const allTypes = () => { const o = {}; for (const [k, v] of Object.entries(TYPES)) if (k !== 'etc') o[k] = v; for (const c of (S.types || [])) o[c.id] = c.name; o.etc = TYPES.etc; return o; };
+const typeName = k => allTypes()[k] || TYPES.concept;
+const typeKey = w => TYPE_TAG[w] || Object.entries(allTypes()).find(([, v]) => v === w || v.replace(/\s/g, '') === w)?.[0] || null;
 const typeOf = t => t.type || (t.kind === 'rec' || t.kind === 'custom' ? 'etc' : t.kind === 'study' ? 'concept' : 'review');
 const GRADES = { perfect: '완벽히 이해', partial: '조금 이해', again: '한 번 더 복습' };
 const REVIEW = {0:.3,1:.5,2:.4,3:.3,4:.25,5:.2};
@@ -461,7 +478,7 @@ function nextExam(p) {
 function parseRange(text, diff) {
   return String(text || '').split('\n').map(l => l.trim()).filter(Boolean).map(l => {
     let type = 'concept';
-    l = l.replace(/\s*#(개념|문제|풀이|암기|복습)\s*/g, (_, k) => { type = TYPE_TAG[k]; return ' '; }).trim();
+    l = l.replace(/\s*#([^\s#]+)\s*/g, (m, k) => { const ty = typeKey(k); if (!ty) return m; type = ty; return ' '; }).trim();
     let title = l, min = null;
     const m = l.match(/^(.*?)[\s\/|,·]+(\d+(?:\.\d+)?)\s*(분|m|min|시간|h)?\s*$/i);
     if (m && m[1].trim()) {
@@ -474,7 +491,7 @@ function parseRange(text, diff) {
     return { title, min, type };
   });
 }
-const unitsText = s => s.units.map(u => `${u.title} / ${u.min}${u.type && u.type !== 'concept' ? ' #' + TYPE_SHORT[u.type] : ''}`).join('\n');
+const unitsText = s => s.units.map(u => `${u.title} / ${u.min}${u.type && u.type !== 'concept' ? ' #' + (TYPE_SHORT[u.type] || typeName(u.type).replace(/\s/g, '')) : ''}`).join('\n');
 const studyTotal = s => s.units.reduce((a, u) => a + u.min, 0);
 const reviewTotal = s => r5(studyTotal(s) * REVIEW[s.target || 0]);
 const finalMin = (p, s) => Math.min(p.time.session, 40);
@@ -691,7 +708,7 @@ function openRate(p, t) {
   const sched = chainReviews(p, t).filter(x => !x.done && x.date);
   const isReview = t.kind === 'spaced';
   openSheet(`<h3>얼마나 이해했나요?</h3>
-    <p class="sub" style="margin-top:4px">${esc(t.title)} · ${TYPES[typeOf(t)]}</p>
+    <p class="sub" style="margin-top:4px">${esc(t.title)} · ${typeName(typeOf(t))}</p>
     ${!sched.length && t.kind === 'study' && t.uid && p.tasks.some(x => x.uid === t.uid && x.kind === 'study' && !x.done) ? `<div class="note" style="margin-top:14px"><span>이 단원의 나머지 조각까지 끝내면 망각 곡선 복습 일정이 잡혀요.</span></div>` : ''}
     ${sched.length ? `<div class="note" style="margin-top:14px;flex-direction:column;align-items:flex-start;gap:4px"><b style="font-size:13px">망각 곡선 복습 일정 (필수)</b><span class="num" style="font-size:13px;color:var(--ink2)">${sched.map(x => `${md(x.date)}`).join(' · ')}</span></div>` : ''}
     <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
@@ -781,7 +798,7 @@ function openClose() {
     <p class="sub" style="margin-top:4px">못 끝낸 과제를 하나씩 정해요. 고르지 않은 건 내일 아침 자동으로 빈 시간에 옮겨져요.</p>
     <div class="btns" style="margin-top:14px"><button class="btn line" id="cAll">전부 다음 빈 날로</button></div>
     <div style="border-top:1px solid var(--line);margin-top:14px">${list.map(t => `<div class="close-row" data-id="${t.id}">
-      <div><div class="tt">${esc(t.title)}</div><div class="tm"><span class="dot" style="background:${subjColor(p, t)}"></span>${esc(subjName(p, t))} · ${fmtMin(t.min)}</div></div>
+      <div><div class="tt">${esc(t.title)}</div><div class="tm"><span class="dot" style="background:${subjColor(p, t)}"></span>${esc(subjName(p, t))}${(() => { const sj = t.sid && subj(p, t.sid); if (!sj || sj.exam < today()) return ''; const n = diffDays(today(), sj.exam); return ` <b class="num" style="font-weight:600;color:var(--ink2)">${n ? 'D-' + n : 'D-DAY'}</b>`; })()} · ${fmtMin(t.min)}</div></div>
       <div class="cbtns"><button data-c="next">다음 빈 날</button><button data-c="tmr">내일</button><button data-c="pick">날짜 고르기</button><button data-c="drop">버리기</button></div></div>`).join('') || '<div class="empty">못 끝낸 과제가 없어요.</div>'}</div>
     <div class="btns"><span class="sp"></span><button class="btn line" data-act="close">닫기</button><button class="btn" id="cDone">정리 끝</button></div>`, sh => {
     const mark = (id, c) => { pick[id] = c; $$(`.close-row[data-id="${id}"] [data-c]`, sh).forEach(b => b.classList.toggle('on', b.dataset.c === c)); };
@@ -869,8 +886,8 @@ function taskRow(p, t) {
     <button class="chk" data-act="toggle" data-id="${t.id}" aria-label="완료 표시"></button>
     <div class="tbody" data-act="edit" data-id="${t.id}">
       <div class="tt">${esc(t.title)}</div>
-      <div class="tm">${t.at && t.date ? `<b class="num" style="color:var(--forest);font-weight:650">${t.at} 시작</b> · ` : ''}<span class="dot" style="background:${subjColor(p, t)}"></span>${esc(subjName(p, t))} · ${fmtMin(t.min)}
-        ${t.ebb ? `<span class="tag g">망각 곡선 ${EBB[t.step - 1]}일</span>` : ''}${t.kind === 'final' ? '<span class="tag g">최종 점검</span>' : t.kind === 'rec' ? '<span class="tag g">반복</span>' : typeOf(t) !== 'etc' ? `<span class="tag g">${TYPES[typeOf(t)]}</span>` : ''}${t.grade ? `<span class="tag ${t.grade === 'perfect' ? 'g' : ''}">${GRADES[t.grade]}</span>` : ''}${t.spent ? `<span class="sub">실제 ${fmtMin(t.spent)}</span>` : ''}
+      <div class="tm">${t.at && t.date ? `<b class="num" style="color:var(--forest);font-weight:650">${t.at} 시작</b> · ` : ''}<span class="dot" style="background:${subjColor(p, t)}"></span>${esc(subjName(p, t))}${(() => { const sj = t.sid && subj(p, t.sid); if (!sj || sj.exam < today()) return ''; const n = diffDays(today(), sj.exam); return ` <b class="num" style="font-weight:600;color:var(--ink2)">${n ? 'D-' + n : 'D-DAY'}</b>`; })()} · ${fmtMin(t.min)}
+        ${t.ebb ? `<span class="tag g">망각 곡선 ${EBB[t.step - 1]}일</span>` : ''}${t.kind === 'final' ? '<span class="tag g">최종 점검</span>' : t.kind === 'rec' ? '<span class="tag g">반복</span>' : typeOf(t) !== 'etc' ? `<span class="tag g">${typeName(typeOf(t))}</span>` : ''}${t.grade ? `<span class="tag ${t.grade === 'perfect' ? 'g' : ''}">${GRADES[t.grade]}</span>` : ''}${t.spent ? `<span class="sub">실제 ${fmtMin(t.spent)}</span>` : ''}
         ${t.carry ? `<span class="tag">이월 ${t.carry}회</span>` : ''}${after ? '<span class="tag">시험일 이후</span>' : ''}</div>
     </div>
     ${!t.done && t.date === today() ? `<button class="go" data-act="t-start" data-id="${t.id}">${S.timer && S.timer.tid === t.id ? '진행 중' : '시작'}</button>` : ''}
@@ -948,10 +965,11 @@ function renderDay(app, p) {
       <div class="arrows"><button class="icon-btn" data-act="day-prev" aria-label="이전 날">‹</button>${isToday ? '' : '<button class="link" data-act="day-today">오늘로</button>'}<button class="icon-btn" data-act="day-next" aria-label="다음 날">›</button></div>
     </div>
     <section class="hero">
-      <div><div class="lbl">${ne ? `${esc(ne.name)} 시험까지` : '시험 일정'}</div><div class="big num">${ne ? (ne.exam === t0 ? 'D-DAY' : 'D-' + diffDays(t0, ne.exam)) : '끝'}</div></div>
+      <div>${examHead(p)}</div>
       <div class="right"><div class="lbl">${list.length ? `${done.length} / ${list.length} 완료` : '계획 없음'}</div><div class="mid num">${list.length ? (leftMin ? fmtMin(leftMin) + ' 남음' : '다 했어요') : '—'}</div></div>
       <div class="bar"><i style="width:${pct}%"></i></div>
     </section>
+    ${ddayStrip(p)}
     ${examsToday.length ? `<div class="note"><span><b>시험</b> · ${examsToday.map(s => esc(s.name)).join(', ')}</span></div>` : ''}
     ${eventsOn(date).length ? `<div class="evs">${eventsOn(date).map(e => evRow(e, false)).join('')}</div>` : ''}
     ${waiting.length ? `<div class="note warn"><span>날짜가 정해지지 않은 과제 <b>${waiting.length}개</b> · ${fmtMin(waiting.reduce((a, t) => a + t.min, 0))}</span><button class="link" data-act="waiting">날짜 정하기</button></div>` : ''}
@@ -1011,6 +1029,32 @@ function renderWeek(app, p) {
       <div class="arrows"><button class="icon-btn" data-act="wk-prev" aria-label="이전 주">‹</button>${UI.week && UI.week !== weekStart(t0) ? '<button class="link" data-act="wk-now">이번 주</button>' : ''}<button class="icon-btn" data-act="wk-next" aria-label="다음 주">›</button></div></div>
     <section class="hero"><div><div class="lbl">이번 주 계획</div><div class="big num">${fmtShort(wl)}</div></div><div class="right"><div class="lbl">완료</div><div class="mid num">${wl ? Math.round(wd / wl * 100) : 0}%</div></div><div class="bar"><i style="width:${wl ? wd / wl * 100 : 0}%"></i></div></section>
     <div style="margin-top:12px">${html}</div></div>`;
+}
+
+/* 시험 D-day: 큰 숫자는 시험 기간 전체 기준, 아래 줄에 과목별 D-day와 하루 필요 시간 */
+function examHead(p) {
+  const t0 = today(), exams = [...new Set(p.subjects.map(s => s.exam))].sort();
+  if (!exams.length) return '<div class="lbl">시험 일정</div><div class="big">—</div>';
+  const first = exams[0], last = exams[exams.length - 1];
+  if (t0 > last) return `<div class="lbl">${esc(p.name)}</div><div class="big">끝</div>`;
+  if (t0 >= first) { const n = exams.filter(d => d <= t0).length; return `<div class="lbl">시험 기간 · ${md(first)}–${md(last)}</div><div class="big num">${n}<span style="font-size:22px;opacity:.6"> / ${exams.length}일</span></div>`; }
+  return `<div class="lbl">${esc(p.name)} 첫 시험까지 <span style="white-space:nowrap">· ${md(first)}–${md(last)}</span></div><div class="big num">D-${diffDays(t0, first)}</div>`;
+}
+function ddayStrip(p) {
+  const t0 = today(), subs = p.subjects.filter(s => s.exam >= t0).sort((a, b) => a.exam.localeCompare(b.exam) || a.name.localeCompare(b.name));
+  if (!subs.length) return '';
+  return `<div class="dstrip">${subs.map(s => {
+    const ts = p.tasks.filter(t => t.sid === s.id), tot = ts.reduce((a, t) => a + t.min, 0), left = ts.filter(t => !t.done).reduce((a, t) => a + t.min, 0);
+    let days = 0; for (let d = t0; d < s.exam; d = addDays(d, 1)) if (capacity(p, d) > 0) days++;
+    const per = days ? Math.round(left / days) : left;
+    const waiting = ts.some(t => !t.done && !t.date);
+    const dd = diffDays(t0, s.exam);
+    return `<div class="dchip2 ${waiting ? 'tight' : ''}" title="${esc(s.name)}">
+      <div class="dn2"><span class="dot" style="background:${s.color}"></span>${esc(s.name)}</div>
+      <div class="dd2 num">${dd === 0 ? 'D-DAY' : 'D-' + dd}</div>
+      <div class="dm2">${dd === 0 ? '오늘 시험' : left ? `하루 ${fmtMin(per)}` : '범위 끝'}${waiting ? ' · 빠듯' : ''}</div>
+      <div class="pb2"><i style="width:${tot ? (tot - left) / tot * 100 : 0}%;background:${s.color}"></i></div></div>`;
+  }).join('')}</div>`;
 }
 
 function renderGrid(app, p) {
@@ -1355,6 +1399,9 @@ function doMove(id, date, at) {
   });
 }
 
+function typePills(cur) {
+  return Object.entries(allTypes()).map(([k, v]) => `<button type="button" class="pill ${cur === k ? 'on' : ''}" data-ty="${k}">${esc(v)}</button>`).join('') + '<button type="button" class="pill" data-addty style="color:var(--forest)">+ 직접 추가</button>';
+}
 function openEdit(id, presetDate) {
   const p = P(), isNew = !id;
   const t = isNew ? { title: '', sid: p.subjects[0]?.id || '', min: 30, date: presetDate || UI.date, kind: 'custom' } : p.tasks.find(x => x.id === id);
@@ -1367,7 +1414,7 @@ function openEdit(id, presetDate) {
       <div><label for="eSub">과목</label><select class="inp" id="eSub"><option value="">기타</option>${p.subjects.map(s => `<option value="${s.id}" ${s.id === t.sid ? 'selected' : ''}>${esc(s.name)}</option>`).join('')}</select></div>
       <div><label for="eMin">예상 시간(분)</label><input class="inp" id="eMin" type="number" inputmode="numeric" min="5" max="600" step="5" value="${t.min}"></div>
     </div>
-    <div class="field"><label>유형</label><div class="pills" id="eType">${Object.entries(TYPES).map(([k, v]) => `<button type="button" class="pill ${typeOf(t) === k ? 'on' : ''}" data-ty="${k}">${v}</button>`).join('')}</div>
+    <div class="field"><label>유형</label><div class="pills" id="eType">${typePills(typeOf(t))}</div>
       <div class="help">기타를 뺀 유형은 끝낼 때 이해도를 고르고, 그에 맞춰 다음 복습이 잡혀요.</div></div>
     <div class="field two"><div><label for="eDate">날짜</label><input class="inp" id="eDate" type="date" value="${t.date || ''}"></div>
       <div><label for="eAt">시작 시각 <span class="sub" style="font-weight:400">· 선택</span></label><input class="inp" id="eAt" type="time" step="300" value="${t.at || ''}"></div></div>
@@ -1381,7 +1428,18 @@ function openEdit(id, presetDate) {
     <div class="btns">${!isNew ? '<button class="btn danger" data-act="e-del">삭제</button>' : ''}<span class="sp"></span><button class="btn line" data-act="close">취소</button><button class="btn" data-act="e-save">저장</button></div>
   `, sh => {
     sh.dataset.task = id || ''; sh.dataset.type = typeOf(t);
-    $('#eType', sh).addEventListener('click', e => { const b = e.target.closest('[data-ty]'); if (!b) return; sh.dataset.type = b.dataset.ty; $$('[data-ty]', sh).forEach(x => x.classList.toggle('on', x === b)); });
+    $('#eType', sh).addEventListener('click', e => {
+      if (e.target.closest('[data-addty]')) {
+        const name = (prompt('새 유형 이름 (예: 서술형 연습)') || '').trim();
+        if (!name) return;
+        if (name.length > 10) return toast('유형 이름은 10자까지예요.');
+        if (Object.values(allTypes()).includes(name)) return toast('이미 있는 유형이에요.');
+        const c = { id: 'c_' + uid(), name }; (S.types = S.types || []).push(c); save();
+        sh.dataset.type = c.id; $('#eType', sh).innerHTML = typePills(c.id); toast(`‘${name}’ 유형을 만들었어요`);
+        return;
+      }
+      const b = e.target.closest('[data-ty]'); if (!b) return; sh.dataset.type = b.dataset.ty; $$('[data-ty]', sh).forEach(x => x.classList.toggle('on', x === b));
+    });
     if (isNew) setTimeout(() => $('#eTitle', sh).focus(), 320);
   });
 }
@@ -1428,7 +1486,7 @@ function openSubject(p, id, onDone) {
     const st = { target: s.target || 0, imp: s.imp, diff: s.diff, color: s.color };
     const sum = () => {
       const u = parseRange($('#sRange', sh).value, st.diff), tot = u.reduce((a, x) => a + x.min, 0);
-      $('#sSum', sh).textContent = u.length ? `${u.length}개 · 공부 ${fmtMin(tot)} + 복습 ${fmtMin(r5(tot * REVIEW[st.target]))} + 최종 점검` : '시간은 “/ 90”, “90분”, “1.5시간”처럼 적어요. 줄 끝에 #암기 #문제 #복습을 붙이면 유형이 정해져요 (기본은 개념 이해).';
+      $('#sSum', sh).textContent = u.length ? `${u.length}개 · 공부 ${fmtMin(tot)} + 복습 ${fmtMin(r5(tot * REVIEW[st.target]))} + 최종 점검` : '시간은 “/ 90”, “90분”, “1.5시간”처럼 적어요. 줄 끝에 #문제 #지문 #암기 #복습 (직접 만든 유형 이름도 가능)을 붙이면 유형이 정해져요. 기본은 개념 이해예요.';
     };
     sh.addEventListener('click', e => {
       const pl = e.target.closest('[data-pill]');
